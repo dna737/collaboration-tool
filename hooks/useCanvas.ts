@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Stroke, Point, Tool } from '@/types';
-import { renderAllStrokes, getCanvasPoint, strokeIntersectsPath } from '@/lib/canvas-utils';
+import { renderAllStrokes, getCanvasPoint, findObjectsToErase } from '@/lib/canvas-utils';
 import { storage } from '@/lib/storage';
 
 interface UseCanvasProps {
@@ -84,19 +84,23 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
     }
 
     if (activeTool === 'brush') {
-      const newStroke: Stroke = {
+      // Create a new canvas object from all points captured during this drawing session
+      const newObject: Stroke = {
         id: uuidv4(),
         tool: 'brush',
         color: brushColor,
         size: brushSize,
-        points: currentPoints,
+        points: currentPoints, // Collection of all points from mouseDown to mouseUp
       };
-      setStrokes((prev) => [...prev, newStroke]);
+      setStrokes((prev) => [...prev, newObject]);
     } else if (activeTool === 'eraser') {
+      // Find which objects the eraser path intersects with
       const threshold = brushSize / 2;
-      setStrokes((prev) =>
-        prev.filter((stroke) => !strokeIntersectsPath(stroke, currentPoints, threshold))
-      );
+      setStrokes((prev) => {
+        const objectIdsToErase = findObjectsToErase(prev, currentPoints, threshold);
+        // Remove all objects that were intersected by the eraser
+        return prev.filter((object) => !objectIdsToErase.includes(object.id));
+      });
     }
 
     setIsDrawing(false);

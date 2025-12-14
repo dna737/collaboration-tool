@@ -51,13 +51,16 @@ export function getCanvasPoint(
   };
 }
 
-export function strokeIntersectsPoint(
-  stroke: Stroke,
+/**
+ * Checks if a point belongs to (intersects with) a canvas object.
+ * Returns true if the point is within threshold distance of any point in the object.
+ */
+export function objectContainsPoint(
+  object: Stroke,
   point: Point,
   threshold: number
 ): boolean {
-  console.log("stroke points:", stroke.points);
-  return stroke.points.some((p) => {
+  return object.points.some((p) => {
     const distance = Math.sqrt(
       Math.pow(p.x - point.x, 2) + Math.pow(p.y - point.y, 2)
     );
@@ -65,10 +68,25 @@ export function strokeIntersectsPoint(
   });
 }
 
-export function strokeIntersectsPath(
-  stroke: Stroke,
-  path: Point[],
+/**
+ * Finds which objects intersect with the eraser path.
+ * Returns an array of object IDs that should be erased.
+ */
+export function findObjectsToErase(
+  objects: Stroke[],
+  eraserPath: Point[],
   threshold: number
-): boolean {
-  return path.some((point) => strokeIntersectsPoint(stroke, point, threshold));
+): string[] {
+  const objectsToErase = new Set<string>();
+  
+  // For each point in the eraser path, find which objects it belongs to
+  eraserPath.forEach((eraserPoint) => {
+    objects.forEach((object) => {
+      if (objectContainsPoint(object, eraserPoint, threshold)) {
+        objectsToErase.add(object.id);
+      }
+    });
+  });
+  
+  return Array.from(objectsToErase);
 }
