@@ -15,6 +15,7 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
+  const [objectsToErasePreview, setObjectsToErasePreview] = useState<Set<string>>(new Set());
   const historyRef = useRef<Stroke[][]>([]); // History stack for undo
   const isUndoingRef = useRef(false); // Flag to prevent adding to history during undo
 
@@ -32,8 +33,8 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    renderAllStrokes(ctx, strokes, canvas.width, canvas.height);
-  }, [strokes]);
+    renderAllStrokes(ctx, strokes, canvas.width, canvas.height, objectsToErasePreview);
+  }, [strokes, objectsToErasePreview]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -86,6 +87,7 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
     const point = getCanvasPoint(canvas, e.clientX, e.clientY);
     setIsDrawing(true);
     setCurrentPoints([point]);
+    setObjectsToErasePreview(new Set()); // Clear preview on new eraser action
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -113,6 +115,12 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
         ctx.lineTo(point.x, point.y);
         ctx.stroke();
       }
+    } else if (activeTool === 'eraser') {
+      // Update preview: find objects that will be erased
+      if (newPoints.length >= 2) {
+        const objectIdsToErase = findObjectsToErase(strokes, newPoints);
+        setObjectsToErasePreview(new Set(objectIdsToErase));
+      }
     }
   };
 
@@ -120,6 +128,7 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
     if (!isDrawing || currentPoints.length === 0) {
       setIsDrawing(false);
       setCurrentPoints([]);
+      setObjectsToErasePreview(new Set()); // Clear preview
       return;
     }
 
@@ -144,17 +153,22 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
 
     setIsDrawing(false);
     setCurrentPoints([]);
+    setObjectsToErasePreview(new Set()); // Clear preview
   };
 
   const handleMouseLeave = () => {
     if (isDrawing) {
       handleMouseUp();
+    } else {
+      // Clear preview even if not drawing
+      setObjectsToErasePreview(new Set());
     }
   };
 
   const clearCanvas = () => {
     setStrokes([]);
     storage.clearStrokes();
+    setObjectsToErasePreview(new Set()); // Clear preview
   };
 
   return {

@@ -2,11 +2,32 @@ import { Stroke, Point } from '@/types';
 
 export function drawStroke(
   ctx: CanvasRenderingContext2D,
-  stroke: Stroke
+  stroke: Stroke,
+  opacity: number = 1.0
 ): void {
   if (stroke.points.length < 2) return;
 
-  ctx.strokeStyle = stroke.color;
+  // Convert color to rgba for opacity support
+  const color = stroke.color;
+  let rgbaColor = color;
+  
+  if (opacity < 1.0) {
+    // If color is hex, convert to rgba
+    if (color.startsWith('#')) {
+      const r = parseInt(color.slice(1, 3), 16);
+      const g = parseInt(color.slice(3, 5), 16);
+      const b = parseInt(color.slice(5, 7), 16);
+      rgbaColor = `rgba(${r}, ${g}, ${b}, ${opacity})`;
+    } else if (color.startsWith('rgb')) {
+      // If already rgb/rgba, extract rgb and apply opacity
+      const rgbMatch = color.match(/\d+/g);
+      if (rgbMatch && rgbMatch.length >= 3) {
+        rgbaColor = `rgba(${rgbMatch[0]}, ${rgbMatch[1]}, ${rgbMatch[2]}, ${opacity})`;
+      }
+    }
+  }
+
+  ctx.strokeStyle = rgbaColor;
   ctx.lineWidth = stroke.size;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -33,10 +54,15 @@ export function renderAllStrokes(
   ctx: CanvasRenderingContext2D,
   strokes: Stroke[],
   width: number,
-  height: number
+  height: number,
+  objectsToErasePreview: Set<string> = new Set()
 ): void {
   clearCanvas(ctx, width, height);
-  strokes.forEach((stroke) => drawStroke(ctx, stroke));
+  strokes.forEach((stroke) => {
+    // Render with reduced opacity if it's in the preview set
+    const opacity = objectsToErasePreview.has(stroke.id) ? 0.5 : 1.0;
+    drawStroke(ctx, stroke, opacity);
+  });
 }
 
 export function getCanvasPoint(
