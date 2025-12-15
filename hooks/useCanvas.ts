@@ -15,10 +15,14 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
+  const historyRef = useRef<Stroke[][]>([]); // History stack for undo
+  const isUndoingRef = useRef(false); // Flag to prevent adding to history during undo
 
   useEffect(() => {
     const loadedStrokes = storage.loadStrokes();
     setStrokes(loadedStrokes);
+    // Initialize history with the loaded strokes
+    historyRef.current = [JSON.parse(JSON.stringify(loadedStrokes))];
   }, []);
 
   useEffect(() => {
@@ -38,6 +42,42 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
 
     return () => clearTimeout(timer);
   }, [strokes]);
+
+  // Add current state to history when strokes change (but not during undo)
+  useEffect(() => {
+    if (!isUndoingRef.current) {
+      // Add current state to history (deep copy)
+      historyRef.current.push(JSON.parse(JSON.stringify(strokes)));
+      // Limit history size to prevent memory issues (keep last 50 states)
+      if (historyRef.current.length > 50) {
+        historyRef.current.shift();
+      }
+    }
+    isUndoingRef.current = false; // Reset flag after effect
+  }, [strokes]);
+
+  // Handle Ctrl+Z for undo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check for Ctrl+Z (or Cmd+Z on Mac)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        
+        // Need at least 2 states in history (current + previous)
+        if (historyRef.current.length > 1) {
+          isUndoingRef.current = true;
+          // Remove current state
+          historyRef.current.pop();
+          // Restore previous state
+          const previousState = historyRef.current[historyRef.current.length - 1];
+          setStrokes(JSON.parse(JSON.stringify(previousState))); // Deep copy
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
