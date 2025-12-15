@@ -95,9 +95,8 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
       setStrokes((prev) => [...prev, newObject]);
     } else if (activeTool === 'eraser') {
       // Find which objects the eraser path intersects with
-      const threshold = brushSize / 2;
       setStrokes((prev) => {
-        const objectIdsToErase = findObjectsToErase(prev, currentPoints, threshold);
+        const objectIdsToErase = findObjectsToErase(prev, currentPoints);
         // Remove all objects that were intersected by the eraser
         return prev.filter((object) => !objectIdsToErase.includes(object.id));
       });
