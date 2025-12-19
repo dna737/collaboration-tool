@@ -62,21 +62,23 @@ export default function Toolbar({
         </button>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <label htmlFor="brush-size" style={{ fontWeight: '500' }}>
-          Size:
-        </label>
-        <input
-          id="brush-size"
-          type="range"
-          min="1"
-          max="50"
-          value={brushSize}
-          onChange={(e) => onBrushSizeChange(Number(e.target.value))}
-          style={{ width: '150px' }}
-        />
-        <span style={{ minWidth: '30px' }}>{brushSize}px</span>
-      </div>
+      {activeTool === 'brush' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <label htmlFor="brush-size" style={{ fontWeight: '500' }}>
+            Size:
+          </label>
+          <input
+            id="brush-size"
+            type="range"
+            min="1"
+            max="50"
+            value={brushSize}
+            onChange={(e) => onBrushSizeChange(Number(e.target.value))}
+            style={{ width: '150px' }}
+          />
+          <span style={{ minWidth: '30px' }}>{brushSize}px</span>
+        </div>
+      )}
 
       {activeTool === 'brush' && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
