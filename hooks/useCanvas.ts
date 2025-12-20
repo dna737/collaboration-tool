@@ -72,8 +72,6 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
 
-        console.log("historyRef.current:", historyRef.current);
-
         // Can only undo if we're not at the beginning of history
         if (historyIndexRef.current > 0) {
           isUndoingRef.current = true;
