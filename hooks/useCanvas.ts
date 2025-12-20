@@ -17,6 +17,7 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
   const [objectsToErasePreview, setObjectsToErasePreview] = useState<Set<string>>(new Set());
   const historyRef = useRef<Stroke[][]>([]); // History stack for undo
+  const historyIndexRef = useRef(0); // Current position in history
   const isUndoingRef = useRef(false); // Flag to prevent adding to history during undo
 
   useEffect(() => {
@@ -24,6 +25,7 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
     setStrokes(loadedStrokes);
     // Initialize history with the loaded strokes
     historyRef.current = [JSON.parse(JSON.stringify(loadedStrokes))];
+    historyIndexRef.current = 0;
   }, []);
 
   useEffect(() => {
@@ -46,12 +48,18 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
 
   // Add current state to history when strokes change (but not during undo)
   useEffect(() => {
-    if (!isUndoingRef.current) {
+    if (!isUndoingRef.current && historyRef.current.length > 0) {
+      // When making a new change, discard any "future" states we had undone
+      historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1);
+
       // Add current state to history (deep copy)
       historyRef.current.push(JSON.parse(JSON.stringify(strokes)));
+      historyIndexRef.current = historyRef.current.length - 1;
+
       // Limit history size to prevent memory issues (keep last 50 states)
       if (historyRef.current.length > 50) {
         historyRef.current.shift();
+        historyIndexRef.current--;
       }
     }
     isUndoingRef.current = false; // Reset flag after effect
@@ -63,14 +71,14 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
       // Check for Ctrl+Z (or Cmd+Z on Mac)
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
-        
-        // Need at least 2 states in history (current + previous)
-        if (historyRef.current.length > 1) {
+
+        console.log("historyRef.current:", historyRef.current);
+
+        // Can only undo if we're not at the beginning of history
+        if (historyIndexRef.current > 0) {
           isUndoingRef.current = true;
-          // Remove current state
-          historyRef.current.pop();
-          // Restore previous state
-          const previousState = historyRef.current[historyRef.current.length - 1];
+          historyIndexRef.current--;
+          const previousState = historyRef.current[historyIndexRef.current];
           setStrokes(JSON.parse(JSON.stringify(previousState))); // Deep copy
         }
       }
