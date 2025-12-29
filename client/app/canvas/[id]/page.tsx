@@ -1,14 +1,26 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import Canvas from '@/components/Canvas';
 import Toolbar from '@/components/Toolbar';
 import { Tool } from '@/types';
 
-export default function Home() {
+export default function CanvasPage() {
+  const params = useParams();
+  const router = useRouter();
+  const canvasId = params?.id as string;
+
   const [activeTool, setActiveTool] = useState<Tool>('brush');
   const [brushSize, setBrushSize] = useState(5);
   const [brushColor, setBrushColor] = useState('#000000');
+
+  useEffect(() => {
+    if (!canvasId) {
+      // Redirect to home if no canvas ID
+      router.push('/');
+    }
+  }, [canvasId, router]);
 
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
@@ -33,6 +45,10 @@ export default function Home() {
     }
   };
 
+  if (!canvasId) {
+    return null;
+  }
+
   return (
     <main
       style={{
@@ -49,6 +65,9 @@ export default function Home() {
           <p style={{ color: '#6b7280', margin: 0 }}>
             Draw, erase, and create. Your work is automatically saved.
           </p>
+          <p style={{ color: '#9ca3af', margin: '5px 0 0 0', fontSize: '14px' }}>
+            Canvas ID: <code style={{ backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>{canvasId}</code>
+          </p>
         </header>
 
         <Toolbar
@@ -62,6 +81,7 @@ export default function Home() {
 
         <div style={{ marginTop: '20px' }}>
           <Canvas
+            canvasId={canvasId}
             activeTool={activeTool}
             brushSize={brushSize}
             brushColor={brushColor}
@@ -70,9 +90,10 @@ export default function Home() {
         </div>
 
         <footer style={{ marginTop: '40px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
-          <p>All drawings are saved automatically to your browser&apos;s local storage.</p>
+          <p>All drawings are saved automatically. Share this URL to collaborate in real-time.</p>
         </footer>
       </div>
     </main>
   );
 }
+

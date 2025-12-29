@@ -5,6 +5,7 @@ import { useCanvas } from '@/hooks/useCanvas';
 import { Tool } from '@/types';
 
 interface CanvasProps {
+  canvasId?: string;
   activeTool: Tool;
   brushSize: number;
   brushColor: string;
@@ -17,15 +18,16 @@ interface TrailPoint {
   timestamp: number;
 }
 
-export default function Canvas({ activeTool, brushSize, brushColor, onClear }: CanvasProps) {
+export default function Canvas({ canvasId, activeTool, brushSize, brushColor, onClear }: CanvasProps) {
   const {
     canvasRef,
+    isConnected,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,
     handleMouseLeave,
     clearCanvas,
-  } = useCanvas({ activeTool, brushSize, brushColor });
+  } = useCanvas({ canvasId, activeTool, brushSize, brushColor });
 
   const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
@@ -150,6 +152,38 @@ export default function Canvas({ activeTool, brushSize, brushColor, onClear }: C
 
   return (
     <div className="canvas-container" ref={containerRef} style={{ position: 'relative', display: 'inline-block' }}>
+      {/* Connection status indicator */}
+      {canvasId && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '10px',
+            right: '10px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            backgroundColor: 'rgba(255, 255, 255, 0.9)',
+            padding: '6px 12px',
+            borderRadius: '20px',
+            fontSize: '12px',
+            fontWeight: '500',
+            zIndex: 100,
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          }}
+        >
+          <div
+            style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: isConnected ? '#10b981' : '#ef4444',
+            }}
+          />
+          <span style={{ color: isConnected ? '#10b981' : '#ef4444' }}>
+            {isConnected ? 'Connected' : 'Disconnected'}
+          </span>
+        </div>
+      )}
       <canvas
         ref={canvasRef}
         width={1200}

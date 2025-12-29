@@ -1,24 +1,17 @@
 {
-  "name": "canvas-drawing-app",
+  "name": "collaboration-tool",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "dev": "npm run dev --prefix client",
+    "build": "npm run build --prefix client",
+    "start": "npm start --prefix client",
+    "lint": "npm run lint --prefix client",
+    "server": "npm run dev --prefix server",
+    "server:build": "npm run build --prefix server",
+    "server:start": "npm start --prefix server",
+    "install:all": "npm install && npm install --prefix client && npm install --prefix server"
   },
-  "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "next": "^14.2.0",
-    "uuid": "^9.0.1"
-  },
-  "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0",
-    "@types/uuid": "^9.0.8",
-    "typescript": "^5.3.3"
-  }
+  "description": "Real-time collaborative canvas drawing application",
+  "workspaces": []
 }

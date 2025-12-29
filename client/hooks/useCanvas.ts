@@ -1,16 +1,18 @@
 import { useRef, useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Stroke, Point, Tool } from '@/types';
+import { Stroke, Point, Tool, CanvasId } from '@/types';
 import { renderAllStrokes, getCanvasPoint, findObjectsToErase } from '@/lib/canvas-utils';
 import { storage } from '@/lib/storage';
+import { useCollaboration } from '@/hooks/useCollaboration';
 
 interface UseCanvasProps {
+  canvasId?: CanvasId;
   activeTool: Tool;
   brushSize: number;
   brushColor: string;
 }
 
-export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps) {
+export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -20,13 +22,48 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
   const historyIndexRef = useRef(0); // Current position in history
   const isUndoingRef = useRef(false); // Flag to prevent adding to history during undo
 
+  // Collaboration hook
+  const {
+    isConnected,
+    sendStrokeAdded,
+    sendStrokeRemoved,
+    sendCanvasCleared,
+  } = useCollaboration({
+    canvasId: canvasId || '',
+    onStrokeAdded: (stroke: Stroke) => {
+      setStrokes((prev) => {
+        // Check if stroke already exists (prevent duplicates)
+        if (prev.find((s) => s.id === stroke.id)) {
+          return prev;
+        }
+        return [...prev, stroke];
+      });
+    },
+    onStrokeRemoved: (strokeIds: string[]) => {
+      setStrokes((prev) => prev.filter((s) => !strokeIds.includes(s.id)));
+    },
+    onCanvasCleared: () => {
+      setStrokes([]);
+      storage.clearStrokes(canvasId);
+    },
+    onCanvasState: (initialStrokes: Stroke[]) => {
+      setStrokes(initialStrokes);
+      // Initialize history with the loaded strokes
+      historyRef.current = [JSON.parse(JSON.stringify(initialStrokes))];
+      historyIndexRef.current = 0;
+    },
+  });
+
   useEffect(() => {
-    const loadedStrokes = storage.loadStrokes();
-    setStrokes(loadedStrokes);
-    // Initialize history with the loaded strokes
-    historyRef.current = [JSON.parse(JSON.stringify(loadedStrokes))];
-    historyIndexRef.current = 0;
-  }, []);
+    // Load from localStorage as fallback/cache
+    const loadedStrokes = storage.loadStrokes(canvasId);
+    if (loadedStrokes.length > 0 && strokes.length === 0) {
+      setStrokes(loadedStrokes);
+      // Initialize history with the loaded strokes
+      historyRef.current = [JSON.parse(JSON.stringify(loadedStrokes))];
+      historyIndexRef.current = 0;
+    }
+  }, [canvasId]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -40,11 +77,11 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      storage.saveStrokes(strokes);
+      storage.saveStrokes(strokes, canvasId);
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [strokes]);
+  }, [strokes, canvasId]);
 
   // Add current state to history when strokes change (but not during undo)
   useEffect(() => {
@@ -148,12 +185,21 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
         points: currentPoints, // Collection of all points from mouseDown to mouseUp
       };
       setStrokes((prev) => [...prev, newObject]);
+      // Send to collaboration server
+      if (canvasId) {
+        sendStrokeAdded(newObject);
+      }
     } else if (activeTool === 'eraser') {
       // Find which objects the eraser path intersects with
       setStrokes((prev) => {
         const objectIdsToErase = findObjectsToErase(prev, currentPoints);
         // Remove all objects that were intersected by the eraser
-        return prev.filter((object) => !objectIdsToErase.includes(object.id));
+        const newStrokes = prev.filter((object) => !objectIdsToErase.includes(object.id));
+        // Send to collaboration server
+        if (canvasId && objectIdsToErase.length > 0) {
+          sendStrokeRemoved(objectIdsToErase);
+        }
+        return newStrokes;
       });
     }
 
@@ -173,13 +219,18 @@ export function useCanvas({ activeTool, brushSize, brushColor }: UseCanvasProps)
 
   const clearCanvas = () => {
     setStrokes([]);
-    storage.clearStrokes();
+    storage.clearStrokes(canvasId);
     setObjectsToErasePreview(new Set()); // Clear preview
+    // Send to collaboration server
+    if (canvasId) {
+      sendCanvasCleared();
+    }
   };
 
   return {
     canvasRef,
     strokes,
+    isConnected,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,

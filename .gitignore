@@ -1,4 +1,6 @@
 # dependencies
+/client/node_modules
+/server/node_modules
 /node_modules
 /.pnp
 .pnp.js
@@ -8,6 +10,8 @@
 
 # next.js
 /.next/
+/client/.next/
+/client/out/
 /out/
 
 # production

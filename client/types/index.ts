@@ -22,3 +22,18 @@ export interface CanvasSettings {
   brushSize: number;
   brushColor: string;
 }
+
+export type CanvasId = string;
+
+export interface CollaborationMessage {
+  type: 'stroke-added' | 'stroke-removed' | 'canvas-cleared';
+  canvasId: string;
+  stroke?: Stroke;
+  strokeIds?: string[];
+  timestamp?: number;
+}
+
+export interface CanvasStateMessage {
+  canvasId: string;
+  strokes: Stroke[];
+}

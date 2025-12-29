@@ -4,11 +4,12 @@ A minimal drawing application inspired by Excalidraw, built with Next.js and bro
 
 ## Features
 
-- **Single Canvas**: One drawing surface that persists across sessions
+- **Real-time Collaboration**: Share canvas URLs to collaborate with others instantly
 - **Drawing Tools**: Brush and eraser with customizable size and color
 - **Auto-save**: Continuous persistence to browser localStorage (500ms debounce)
 - **Session Restoration**: Resume exactly where you left off
 - **Keyboard Shortcuts**: Quick tool switching with B (Brush), E (Eraser), C (Clear)
+- **Connection Status**: Visual indicator showing WebSocket connection state
 
 ## Getting Started
 
@@ -19,37 +20,70 @@ A minimal drawing application inspired by Excalidraw, built with Next.js and bro
 
 ### Installation
 
-1. Install dependencies:
+1. Install all dependencies (root, client, and server):
 
 ```bash
-npm install
+npm run install:all
 ```
 
-2. Run the development server:
+Or install them separately:
 
+```bash
+# Root dependencies (if any)
+npm install
+
+# Client dependencies
+npm install --prefix client
+
+# Server dependencies
+npm install --prefix server
+```
+
+2. Run both servers:
+
+**Terminal 1 - Frontend (Next.js):**
 ```bash
 npm run dev
 ```
 
-3. Open [http://localhost:3000](http://localhost:3000) in your browser
+**Terminal 2 - Backend (WebSocket server):**
+```bash
+npm run server
+```
+
+4. Open [http://localhost:3000](http://localhost:3000) in your browser
+
+The app will automatically create a new canvas with a unique ID. Share the URL to collaborate with others in real-time!
 
 ## Project Structure
 
 ```
-app/
-  layout.tsx          # Root layout
-  page.tsx            # Main canvas page
-components/
-  Canvas.tsx          # Main canvas component
-  Toolbar.tsx         # Tool selection UI
-lib/
-  storage.ts          # localStorage helpers
-  canvas-utils.ts     # Drawing utilities
-hooks/
-  useCanvas.ts        # Canvas drawing logic
-  useLocalStorage.ts  # Sync state with localStorage
-types/
-  index.ts            # TypeScript interfaces
+collaboration-tool/
+├── client/              # Next.js frontend application
+│   ├── app/             # Next.js app router
+│   │   ├── canvas/[id]/ # Dynamic canvas route
+│   │   ├── layout.tsx
+│   │   └── page.tsx
+│   ├── components/     # React components
+│   │   ├── Canvas.tsx
+│   │   └── Toolbar.tsx
+│   ├── hooks/          # Custom React hooks
+│   │   ├── useCanvas.ts
+│   │   ├── useCollaboration.ts
+│   │   └── useLocalStorage.ts
+│   ├── lib/            # Utility functions
+│   │   ├── storage.ts
+│   │   └── canvas-utils.ts
+│   ├── types/          # TypeScript types
+│   │   └── index.ts
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── next.config.js
+└── server/             # WebSocket server
+    ├── src/
+    │   └── index.ts
+    ├── package.json
+    └── tsconfig.json
 ```
 
 ## How It Works
@@ -81,17 +115,32 @@ The eraser removes intersecting strokes from the strokes array by detecting coll
 
 ## Building for Production
 
+**Client:**
 ```bash
 npm run build
 npm start
 ```
 
+**Server:**
+```bash
+npm run server:build
+npm run server:start
+```
+
 ## Deployment
 
-This is a client-only app with no backend requirements. You can deploy it to:
+### Client (Next.js)
+Deploy the client to:
+- **Vercel** (recommended): Connect your GitHub repo and set the root directory to `client/`
+- **Static hosting**: Export with `output: 'export'` in `client/next.config.js` and deploy the `out/` directory
 
-- **Vercel** (recommended): Connect your GitHub repo
-- **Static hosting**: Export with `output: 'export'` in next.config.js and deploy the `out/` directory to GitHub Pages, Netlify, or Cloudflare Pages
+### Server (WebSocket)
+Deploy the server to:
+- **Railway**: Connect your GitHub repo and set the root directory to `server/`
+- **Render**: Set build command to `cd server && npm install && npm run build` and start command to `cd server && npm start`
+- **Heroku**: Set the root directory to `server/`
+
+Both client and server need to be deployed separately. Update the `NEXT_PUBLIC_WS_URL` environment variable in the client to point to your deployed server URL.
 
 ## Future Enhancements
 
