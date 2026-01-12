@@ -37,3 +37,16 @@ export interface CanvasStateMessage {
   canvasId: string;
   strokes: Stroke[];
 }
+
+export interface UserPresence {
+  odeid: string;
+  userName: string;
+  position: { x: number; y: number };
+  isDrawing: boolean;
+  timestamp: number;
+}
+
+export interface CursorUpdateMessage {
+  canvasId: string;
+  user: UserPresence;
+}

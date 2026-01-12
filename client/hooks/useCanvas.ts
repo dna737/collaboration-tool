@@ -1,18 +1,21 @@
 import { useRef, useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Stroke, Point, Tool, CanvasId } from '@/types';
+import { Stroke, Point, Tool, CanvasId, UserPresence } from '@/types';
 import { renderAllStrokes, getCanvasPoint, findObjectsToErase } from '@/lib/canvas-utils';
 import { storage } from '@/lib/storage';
 import { useCollaboration } from '@/hooks/useCollaboration';
 
 interface UseCanvasProps {
   canvasId?: CanvasId;
+  userName: string;
   activeTool: Tool;
   brushSize: number;
   brushColor: string;
+  onCursorUpdate?: (user: UserPresence) => void;
+  onCursorStop?: (odeid: string) => void;
 }
 
-export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCanvasProps) {
+export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColor, onCursorUpdate, onCursorStop }: UseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -31,8 +34,13 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
     sendStrokeAdded,
     sendStrokeRemoved,
     sendCanvasCleared,
+    sendCursorUpdate,
+    sendCursorStop,
   } = useCollaboration({
     canvasId: canvasId || '',
+    userName,
+    onCursorUpdate,
+    onCursorStop,
     onStrokeAdded: (stroke: Stroke) => {
       setStrokes((prev) => {
         // Check if stroke already exists (prevent duplicates)
@@ -166,6 +174,11 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
     setCurrentPoints(newPoints);
     currentPointsRef.current = newPoints; // Keep ref in sync
 
+    // Send cursor update to other users while drawing
+    if (canvasId) {
+      sendCursorUpdate(point, true);
+    }
+
     if (activeTool === 'brush') {
       ctx.strokeStyle = brushColor;
       ctx.lineWidth = brushSize;
@@ -240,6 +253,11 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
     setCurrentPoints([]);
     currentPointsRef.current = [];
     setObjectsToErasePreview(new Set()); // Clear preview
+    
+    // Notify other users that we stopped drawing
+    if (canvasId) {
+      sendCursorStop();
+    }
   };
 
   const handleMouseLeave = () => {
@@ -249,6 +267,10 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
       // Clear preview even if not drawing
       setObjectsToErasePreview(new Set());
       currentPointsRef.current = [];
+    }
+    // Always notify others when leaving canvas
+    if (canvasId) {
+      sendCursorStop();
     }
   };
 

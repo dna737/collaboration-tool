@@ -20,6 +20,9 @@ const MAX_USERS_PER_SESSION = 10;
 // In-memory storage: Map<canvasId, Stroke[]>
 const canvasStates = new Map<string, any[]>();
 
+// Track users per canvas room: Map<canvasId, Map<socketId, UserInfo>>
+const canvasUsers = new Map<string, Map<string, { odeid: string; userName: string }>>();
+
 // Helper to get or create canvas state
 function getCanvasState(canvasId: string): any[] {
   if (!canvasStates.has(canvasId)) {
@@ -32,7 +35,11 @@ io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
   // Join canvas room
-  socket.on('join-canvas', (canvasId: string) => {
+  socket.on('join-canvas', (data: string | { canvasId: string; userName: string }) => {
+    // Support both old format (string) and new format (object with userName)
+    const canvasId = typeof data === 'string' ? data : data.canvasId;
+    const userName = typeof data === 'string' ? `User ${socket.id.slice(0, 4)}` : data.userName;
+
     if (!canvasId || typeof canvasId !== 'string') {
       socket.emit('error', { message: 'Invalid canvas ID' });
       return;
@@ -40,7 +47,7 @@ io.on('connection', (socket) => {
 
     // Check current room size before allowing join
     const room = io.sockets.adapter.rooms.get(canvasId);
-    const currentUsers = room ? room.size : 1;
+    const currentUsers = room ? room.size : 0;
 
     console.log(`[DEBUG] Canvas ${canvasId}: Current users = ${currentUsers}, Max = ${MAX_USERS_PER_SESSION}`);
 
@@ -53,8 +60,15 @@ io.on('connection', (socket) => {
     }
 
     socket.join(canvasId);
+    
+    // Track user in room
+    if (!canvasUsers.has(canvasId)) {
+      canvasUsers.set(canvasId, new Map());
+    }
+    canvasUsers.get(canvasId)!.set(socket.id, { odeid: socket.id, userName });
+
     const newRoomSize = io.sockets.adapter.rooms.get(canvasId)?.size || 0;
-    console.log(`Client ${socket.id} joined canvas ${canvasId} (${newRoomSize}/${MAX_USERS_PER_SESSION})`);
+    console.log(`Client ${socket.id} (${userName}) joined canvas ${canvasId} (${newRoomSize}/${MAX_USERS_PER_SESSION})`);
 
     // Send current canvas state to the new client
     const strokes = getCanvasState(canvasId);
@@ -119,8 +133,47 @@ io.on('connection', (socket) => {
     socket.to(canvasId).emit('canvas-cleared', { canvasId });
   });
 
-  // Handle disconnect
+  // Handle cursor/drawing updates
+  socket.on('cursor-update', (data: { canvasId: string; position: { x: number; y: number }; isDrawing: boolean }) => {
+    const { canvasId, position, isDrawing } = data;
+    
+    if (!canvasId || !position) {
+      return; // Silently ignore invalid cursor updates
+    }
+
+    const userInfo = canvasUsers.get(canvasId)?.get(socket.id);
+    
+    if (userInfo) {
+      // Broadcast to all OTHER users in the room
+      socket.to(canvasId).emit('cursor-update', {
+        canvasId,
+        user: {
+          odeid: socket.id,
+          userName: userInfo.userName,
+          position,
+          isDrawing,
+          timestamp: Date.now(),
+        },
+      });
+    }
+  });
+
+  // Handle cursor stop (when user stops drawing or leaves canvas)
+  socket.on('cursor-stop', (data: { canvasId: string }) => {
+    if (data.canvasId) {
+      socket.to(data.canvasId).emit('cursor-stop', { odeid: socket.id });
+    }
+  });
+
+  // Handle disconnect - clean up user presence
   socket.on('disconnect', () => {
+    // Remove user from all canvas rooms and notify others
+    canvasUsers.forEach((users, canvasId) => {
+      if (users.has(socket.id)) {
+        users.delete(socket.id);
+        io.to(canvasId).emit('cursor-stop', { odeid: socket.id });
+      }
+    });
     console.log('Client disconnected:', socket.id);
   });
 });

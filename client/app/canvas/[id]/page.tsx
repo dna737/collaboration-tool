@@ -7,6 +7,18 @@ import Toolbar from '@/components/Toolbar';
 import SessionFullDialog from '@/components/SessionFullDialog';
 import { Tool } from '@/types';
 
+// Generate or retrieve user name from localStorage
+function getUserName(): string {
+  if (typeof window === 'undefined') {
+    return 'User';
+  }
+  const stored = localStorage.getItem('userName');
+  if (stored) return stored;
+  const name = `User ${Math.floor(Math.random() * 9999).toString().padStart(4, '0')}`;
+  localStorage.setItem('userName', name);
+  return name;
+}
+
 export default function CanvasPage() {
   const params = useParams();
   const router = useRouter();
@@ -15,10 +27,16 @@ export default function CanvasPage() {
   const [activeTool, setActiveTool] = useState<Tool>('brush');
   const [brushSize, setBrushSize] = useState(5);
   const [brushColor, setBrushColor] = useState('#000000');
+  const [userName, setUserName] = useState<string>('User');
   
   // Track error and initialization state from Canvas component
   const [error, setError] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
+
+  // Generate user name on mount (client-side only)
+  useEffect(() => {
+    setUserName(getUserName());
+  }, []);
 
   // Check if error indicates session is full
   const isSessionFull = error && error.toLowerCase().includes('session is full');
@@ -102,6 +120,7 @@ export default function CanvasPage() {
         }}>
           <Canvas
             canvasId={canvasId}
+            userName={userName}
             activeTool={activeTool}
             brushSize={brushSize}
             brushColor={brushColor}

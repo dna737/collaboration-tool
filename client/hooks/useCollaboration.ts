@@ -1,27 +1,34 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { Stroke, CollaborationMessage, CanvasStateMessage } from '@/types';
+import { Stroke, CollaborationMessage, CanvasStateMessage, UserPresence, CursorUpdateMessage } from '@/types';
 
 interface UseCollaborationProps {
   canvasId: string;
+  userName: string;
   onStrokeAdded: (stroke: Stroke) => void;
   onStrokeRemoved: (strokeIds: string[]) => void;
   onCanvasCleared: () => void;
   onCanvasState: (strokes: Stroke[]) => void;
+  onCursorUpdate?: (user: UserPresence) => void;
+  onCursorStop?: (odeid: string) => void;
 }
 
 export function useCollaboration({
   canvasId,
+  userName,
   onStrokeAdded,
   onStrokeRemoved,
   onCanvasCleared,
   onCanvasState,
+  onCursorUpdate,
+  onCursorStop,
 }: UseCollaborationProps) {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const socketRef = useRef<Socket | null>(null);
   const isLocalActionRef = useRef(false); // Prevent echo loops
+  const lastCursorUpdateRef = useRef<number>(0); // For throttling cursor updates
   
   // Store callbacks in refs to avoid reconnecting when they change
   const callbacksRef = useRef({
@@ -29,6 +36,8 @@ export function useCollaboration({
     onStrokeRemoved,
     onCanvasCleared,
     onCanvasState,
+    onCursorUpdate,
+    onCursorStop,
   });
 
   // Update callbacks ref when they change
@@ -38,8 +47,10 @@ export function useCollaboration({
       onStrokeRemoved,
       onCanvasCleared,
       onCanvasState,
+      onCursorUpdate,
+      onCursorStop,
     };
-  }, [onStrokeAdded, onStrokeRemoved, onCanvasCleared, onCanvasState]);
+  }, [onStrokeAdded, onStrokeRemoved, onCanvasCleared, onCanvasState, onCursorUpdate, onCursorStop]);
 
   useEffect(() => {
     if (!canvasId) {
@@ -66,8 +77,8 @@ export function useCollaboration({
       setIsConnected(true);
       setError(null); // Clear any previous errors on reconnect
       
-      // Join the canvas room
-      socket.emit('join-canvas', canvasId);
+      // Join the canvas room with user name
+      socket.emit('join-canvas', { canvasId, userName });
     });
 
     socket.on('disconnect', () => {
@@ -114,6 +125,20 @@ export function useCollaboration({
       if (data.canvasId === canvasId && !isLocalActionRef.current) {
         console.log('Received remote canvas clear');
         callbacksRef.current.onCanvasCleared();
+      }
+    });
+
+    // Handle remote cursor updates
+    socket.on('cursor-update', (data: CursorUpdateMessage) => {
+      if (data.canvasId === canvasId && callbacksRef.current.onCursorUpdate) {
+        callbacksRef.current.onCursorUpdate(data.user);
+      }
+    });
+
+    // Handle remote cursor stop
+    socket.on('cursor-stop', (data: { odeid: string }) => {
+      if (callbacksRef.current.onCursorStop) {
+        callbacksRef.current.onCursorStop(data.odeid);
       }
     });
 
@@ -180,6 +205,34 @@ export function useCollaboration({
     }
   }, [canvasId]);
 
+  // Send cursor update to server (throttled to ~50ms)
+  const sendCursorUpdate = useCallback(
+    (position: { x: number; y: number }, isDrawing: boolean) => {
+      const now = Date.now();
+      // Throttle cursor updates to avoid flooding the server
+      if (now - lastCursorUpdateRef.current < 50) {
+        return;
+      }
+      lastCursorUpdateRef.current = now;
+
+      if (socketRef.current?.connected && canvasId) {
+        socketRef.current.emit('cursor-update', {
+          canvasId,
+          position,
+          isDrawing,
+        });
+      }
+    },
+    [canvasId]
+  );
+
+  // Send cursor stop to server
+  const sendCursorStop = useCallback(() => {
+    if (socketRef.current?.connected && canvasId) {
+      socketRef.current.emit('cursor-stop', { canvasId });
+    }
+  }, [canvasId]);
+
   return {
     isConnected,
     error,
@@ -187,6 +240,8 @@ export function useCollaboration({
     sendStrokeAdded,
     sendStrokeRemoved,
     sendCanvasCleared,
+    sendCursorUpdate,
+    sendCursorStop,
   };
 }
 

@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useCanvas } from '@/hooks/useCanvas';
-import { Tool } from '@/types';
+import { Tool, UserPresence } from '@/types';
 
 interface CanvasProps {
   canvasId?: string;
+  userName: string;
   activeTool: Tool;
   brushSize: number;
   brushColor: string;
@@ -20,7 +21,24 @@ interface TrailPoint {
   timestamp: number;
 }
 
-export default function Canvas({ canvasId, activeTool, brushSize, brushColor, onClear, onErrorChange, onInitializingChange }: CanvasProps) {
+export default function Canvas({ canvasId, userName, activeTool, brushSize, brushColor, onClear, onErrorChange, onInitializingChange }: CanvasProps) {
+  // State for remote user cursors
+  const [remoteCursors, setRemoteCursors] = useState<Map<string, UserPresence>>(new Map());
+
+  // Handle cursor update from other users
+  const handleCursorUpdate = useCallback((user: UserPresence) => {
+    setRemoteCursors(prev => new Map(prev).set(user.odeid, user));
+  }, []);
+
+  // Handle cursor stop from other users
+  const handleCursorStop = useCallback((odeid: string) => {
+    setRemoteCursors(prev => {
+      const next = new Map(prev);
+      next.delete(odeid);
+      return next;
+    });
+  }, []);
+
   const {
     canvasRef,
     isConnected,
@@ -31,7 +49,34 @@ export default function Canvas({ canvasId, activeTool, brushSize, brushColor, on
     handleMouseUp,
     handleMouseLeave,
     clearCanvas,
-  } = useCanvas({ canvasId, activeTool, brushSize, brushColor });
+  } = useCanvas({ 
+    canvasId, 
+    userName,
+    activeTool, 
+    brushSize, 
+    brushColor,
+    onCursorUpdate: handleCursorUpdate,
+    onCursorStop: handleCursorStop,
+  });
+
+  // Clean up stale cursors (cursors not updated in 3 seconds)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setRemoteCursors(prev => {
+        const next = new Map(prev);
+        let changed = false;
+        prev.forEach((cursor, odeid) => {
+          if (now - cursor.timestamp > 3000) {
+            next.delete(odeid);
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Notify parent of error and initialization state changes
   useEffect(() => {
@@ -309,6 +354,66 @@ export default function Canvas({ canvasId, activeTool, brushSize, brushColor, on
           )}
         </>
       )}
+      {/* Remote user cursor flares */}
+      {Array.from(remoteCursors.values()).map((cursor) => (
+        cursor.isDrawing && (
+          <div
+            key={cursor.odeid}
+            style={{
+              position: 'absolute',
+              left: cursor.position.x,
+              top: cursor.position.y,
+              transform: 'translate(-50%, -100%)',
+              pointerEvents: 'none',
+              zIndex: 50,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+            }}
+          >
+            {/* Flare glow effect */}
+            <div
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: '50%',
+                backgroundColor: '#3b82f6',
+                boxShadow: '0 0 12px 4px rgba(59, 130, 246, 0.6)',
+                animation: 'pulse 1.5s ease-in-out infinite',
+              }}
+            />
+            {/* User name label */}
+            <div
+              style={{
+                marginTop: 4,
+                padding: '2px 8px',
+                backgroundColor: '#3b82f6',
+                color: 'white',
+                fontSize: 11,
+                fontWeight: 500,
+                borderRadius: 4,
+                whiteSpace: 'nowrap',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+              }}
+            >
+              {cursor.userName}
+            </div>
+          </div>
+        )
+      ))}
+      {/* Pulse animation styles */}
+      <style jsx>{`
+        @keyframes pulse {
+          0%, 100% {
+            transform: scale(1);
+            opacity: 1;
+          }
+          50% {
+            transform: scale(1.3);
+            opacity: 0.7;
+          }
+        }
+      `}</style>
       <button
         onClick={handleClearClick}
         disabled={isDisabled}
