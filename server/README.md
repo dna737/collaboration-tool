@@ -46,4 +46,3 @@ The server uses Socket.io for WebSocket communication and stores canvas states i
 - `stroke-removed`: Client erases strokes, broadcast removal
 - `canvas-cleared`: Client clears canvas, broadcast clear
 - `error`: Connection/validation errors
-

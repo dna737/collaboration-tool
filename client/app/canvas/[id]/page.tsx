@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Canvas from '@/components/Canvas';
 import Toolbar from '@/components/Toolbar';
+import SessionFullDialog from '@/components/SessionFullDialog';
 import { Tool } from '@/types';
 
 export default function CanvasPage() {
@@ -14,6 +15,13 @@ export default function CanvasPage() {
   const [activeTool, setActiveTool] = useState<Tool>('brush');
   const [brushSize, setBrushSize] = useState(5);
   const [brushColor, setBrushColor] = useState('#000000');
+  
+  // Track error and initialization state from Canvas component
+  const [error, setError] = useState<string | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
+
+  // Check if error indicates session is full
+  const isSessionFull = error && error.toLowerCase().includes('session is full');
 
   useEffect(() => {
     if (!canvasId) {
@@ -45,6 +53,10 @@ export default function CanvasPage() {
     }
   };
 
+  const handleRefresh = () => {
+    window.location.reload();
+  };
+
   if (!canvasId) {
     return null;
   }
@@ -70,29 +82,44 @@ export default function CanvasPage() {
           </p>
         </header>
 
-        <Toolbar
-          activeTool={activeTool}
-          brushSize={brushSize}
-          brushColor={brushColor}
-          onToolChange={setActiveTool}
-          onBrushSizeChange={setBrushSize}
-          onBrushColorChange={setBrushColor}
-        />
+        {/* Always render Canvas (hidden during init) so it can establish connection */}
+        {/* Hide everything else during initialization or session full */}
+        {!isInitializing && !isSessionFull && (
+          <Toolbar
+            activeTool={activeTool}
+            brushSize={brushSize}
+            brushColor={brushColor}
+            onToolChange={setActiveTool}
+            onBrushSizeChange={setBrushSize}
+            onBrushColorChange={setBrushColor}
+          />
+        )}
 
-        <div style={{ marginTop: '20px' }}>
+        {/* Canvas is always rendered but hidden during init/error to establish connection */}
+        <div style={{ 
+          marginTop: '20px',
+          display: isInitializing || isSessionFull ? 'none' : 'block'
+        }}>
           <Canvas
             canvasId={canvasId}
             activeTool={activeTool}
             brushSize={brushSize}
             brushColor={brushColor}
             onClear={handleClear}
+            onErrorChange={setError}
+            onInitializingChange={setIsInitializing}
           />
         </div>
 
-        <footer style={{ marginTop: '40px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
-          <p>All drawings are saved automatically. Share this URL to collaborate in real-time.</p>
-        </footer>
+        {!isInitializing && !isSessionFull && (
+          <footer style={{ marginTop: '40px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
+            <p>All drawings are saved automatically. Share this URL to collaborate in real-time.</p>
+          </footer>
+        )}
       </div>
+
+      {/* Show session full dialog */}
+      {isSessionFull && <SessionFullDialog onRefresh={handleRefresh} />}
     </main>
   );
 }

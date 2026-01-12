@@ -14,6 +14,9 @@ const io = new Server(httpServer, {
   },
 });
 
+// Maximum number of users per session
+const MAX_USERS_PER_SESSION = 10;
+
 // In-memory storage: Map<canvasId, Stroke[]>
 const canvasStates = new Map<string, any[]>();
 
@@ -35,8 +38,23 @@ io.on('connection', (socket) => {
       return;
     }
 
+    // Check current room size before allowing join
+    const room = io.sockets.adapter.rooms.get(canvasId);
+    const currentUsers = room ? room.size : 1;
+
+    console.log(`[DEBUG] Canvas ${canvasId}: Current users = ${currentUsers}, Max = ${MAX_USERS_PER_SESSION}`);
+
+    if (currentUsers >= MAX_USERS_PER_SESSION) {
+      socket.emit('error', { 
+        message: `Session is full. Maximum ${MAX_USERS_PER_SESSION} users allowed per session.` 
+      });
+      console.log(`Client ${socket.id} rejected from canvas ${canvasId} - session full (${currentUsers}/${MAX_USERS_PER_SESSION})`);
+      return;
+    }
+
     socket.join(canvasId);
-    console.log(`Client ${socket.id} joined canvas ${canvasId}`);
+    const newRoomSize = io.sockets.adapter.rooms.get(canvasId)?.size || 0;
+    console.log(`Client ${socket.id} joined canvas ${canvasId} (${newRoomSize}/${MAX_USERS_PER_SESSION})`);
 
     // Send current canvas state to the new client
     const strokes = getCanvasState(canvasId);
@@ -111,4 +129,5 @@ const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log(`WebSocket server running on port ${PORT}`);
 });
+
 

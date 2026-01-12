@@ -10,6 +10,8 @@ interface CanvasProps {
   brushSize: number;
   brushColor: string;
   onClear: () => void;
+  onErrorChange?: (error: string | null) => void;
+  onInitializingChange?: (isInitializing: boolean) => void;
 }
 
 interface TrailPoint {
@@ -18,16 +20,31 @@ interface TrailPoint {
   timestamp: number;
 }
 
-export default function Canvas({ canvasId, activeTool, brushSize, brushColor, onClear }: CanvasProps) {
+export default function Canvas({ canvasId, activeTool, brushSize, brushColor, onClear, onErrorChange, onInitializingChange }: CanvasProps) {
   const {
     canvasRef,
     isConnected,
+    error,
+    isInitializing,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,
     handleMouseLeave,
     clearCanvas,
   } = useCanvas({ canvasId, activeTool, brushSize, brushColor });
+
+  // Notify parent of error and initialization state changes
+  useEffect(() => {
+    if (onErrorChange) {
+      onErrorChange(error);
+    }
+  }, [error, onErrorChange]);
+
+  useEffect(() => {
+    if (onInitializingChange) {
+      onInitializingChange(isInitializing);
+    }
+  }, [isInitializing, onInitializingChange]);
 
   const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
@@ -84,6 +101,7 @@ export default function Canvas({ canvasId, activeTool, brushSize, brushColor, on
   }, [activeTool, isDragging, trail.length]);
 
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isConnected || error) return;
     handleMouseDown(e);
     if (activeTool === 'eraser') {
       setIsDragging(true);
@@ -93,6 +111,7 @@ export default function Canvas({ canvasId, activeTool, brushSize, brushColor, on
   };
 
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isConnected || error) return;
     handleMouseMove(e);
     
     if (activeTool === 'eraser' && containerRef.current) {
@@ -133,6 +152,7 @@ export default function Canvas({ canvasId, activeTool, brushSize, brushColor, on
   };
 
   const handleClearClick = () => {
+    if (!isConnected || error) return;
     if (window.confirm('Are you sure you want to clear the canvas? This cannot be undone.')) {
       clearCanvas();
       onClear();
@@ -149,6 +169,9 @@ export default function Canvas({ canvasId, activeTool, brushSize, brushColor, on
     
     return timeOpacity * distanceOpacity;
   };
+
+  // Check if canvas is disabled (not connected or has error)
+  const isDisabled = !isConnected || !!error;
 
   return (
     <div className="canvas-container" ref={containerRef} style={{ position: 'relative', display: 'inline-block' }}>
@@ -184,6 +207,29 @@ export default function Canvas({ canvasId, activeTool, brushSize, brushColor, on
           </span>
         </div>
       )}
+      {/* Error message */}
+      {error && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '50px',
+            right: '10px',
+            backgroundColor: '#fee2e2',
+            border: '1px solid #fca5a5',
+            color: '#991b1b',
+            padding: '12px 16px',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: '500',
+            zIndex: 100,
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+            maxWidth: '300px',
+          }}
+        >
+          <div style={{ fontWeight: '600', marginBottom: '4px' }}>⚠️ Connection Error</div>
+          <div>{error}</div>
+        </div>
+      )}
       <canvas
         ref={canvasRef}
         width={1200}
@@ -194,10 +240,26 @@ export default function Canvas({ canvasId, activeTool, brushSize, brushColor, on
         onMouseLeave={handleCanvasMouseLeave}
         style={{
           border: '2px solid #ddd',
-          cursor: activeTool === 'brush' ? 'crosshair' : 'none',
+          cursor: isDisabled ? 'not-allowed' : (activeTool === 'brush' ? 'crosshair' : 'none'),
           backgroundColor: 'white',
+          opacity: isDisabled ? 0.7 : 1,
         }}
       />
+      {/* Disabled overlay */}
+      {isDisabled && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            backgroundColor: 'rgba(255, 255, 255, 0.3)',
+            pointerEvents: 'none',
+            zIndex: 5,
+          }}
+        />
+      )}
       {activeTool === 'eraser' && (
         <>
           {/* Render long trail shadows - only when dragging */}
@@ -249,14 +311,16 @@ export default function Canvas({ canvasId, activeTool, brushSize, brushColor, on
       )}
       <button
         onClick={handleClearClick}
+        disabled={isDisabled}
         style={{
           marginTop: '10px',
           padding: '8px 16px',
-          backgroundColor: '#ef4444',
+          backgroundColor: isDisabled ? '#9ca3af' : '#ef4444',
           color: 'white',
           border: 'none',
           borderRadius: '4px',
-          cursor: 'pointer',
+          cursor: isDisabled ? 'not-allowed' : 'pointer',
+          opacity: isDisabled ? 0.6 : 1,
         }}
       >
         Clear Canvas

@@ -17,6 +17,7 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
+  const currentPointsRef = useRef<Point[]>([]); // Ref to track latest points for eraser
   const [objectsToErasePreview, setObjectsToErasePreview] = useState<Set<string>>(new Set());
   const historyRef = useRef<Stroke[][]>([]); // History stack for undo
   const historyIndexRef = useRef(0); // Current position in history
@@ -25,6 +26,8 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
   // Collaboration hook
   const {
     isConnected,
+    error,
+    isInitializing,
     sendStrokeAdded,
     sendStrokeRemoved,
     sendCanvasCleared,
@@ -55,6 +58,10 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
   });
 
   useEffect(() => {
+    // Only load from localStorage if user is connected (authorized to see the canvas)
+    // This prevents unauthorized users from seeing strokes before session check completes
+    if (!isConnected) return;
+    
     // Load from localStorage as fallback/cache
     const loadedStrokes = storage.loadStrokes(canvasId);
     if (loadedStrokes.length > 0 && strokes.length === 0) {
@@ -63,7 +70,7 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
       historyRef.current = [JSON.parse(JSON.stringify(loadedStrokes))];
       historyIndexRef.current = 0;
     }
-  }, [canvasId]);
+  }, [canvasId, isConnected, strokes.length]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -105,6 +112,9 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
   // Handle Ctrl+Z for undo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Disable undo if not connected or if there's an error
+      if (!isConnected || error) return;
+      
       // Check for Ctrl+Z (or Cmd+Z on Mac)
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -121,19 +131,26 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [isConnected, error]);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Disable drawing if not connected or if there's an error
+    if (!isConnected || error) return;
+    
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const point = getCanvasPoint(canvas, e.clientX, e.clientY);
     setIsDrawing(true);
-    setCurrentPoints([point]);
+    const initialPoints = [point];
+    setCurrentPoints(initialPoints);
+    currentPointsRef.current = initialPoints; // Keep ref in sync
     setObjectsToErasePreview(new Set()); // Clear preview on new eraser action
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Disable drawing if not connected or if there's an error
+    if (!isConnected || error) return;
     if (!isDrawing) return;
 
     const canvas = canvasRef.current;
@@ -143,8 +160,11 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
     if (!ctx) return;
 
     const point = getCanvasPoint(canvas, e.clientX, e.clientY);
-    const newPoints = [...currentPoints, point];
+    // Use ref to get latest points to avoid stale state issues
+    const latestPoints = currentPointsRef.current.length > 0 ? currentPointsRef.current : currentPoints;
+    const newPoints = [...latestPoints, point];
     setCurrentPoints(newPoints);
+    currentPointsRef.current = newPoints; // Keep ref in sync
 
     if (activeTool === 'brush') {
       ctx.strokeStyle = brushColor;
@@ -152,9 +172,9 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
-      if (currentPoints.length > 0) {
+      if (latestPoints.length > 0) {
         ctx.beginPath();
-        ctx.moveTo(currentPoints[currentPoints.length - 1].x, currentPoints[currentPoints.length - 1].y);
+        ctx.moveTo(latestPoints[latestPoints.length - 1].x, latestPoints[latestPoints.length - 1].y);
         ctx.lineTo(point.x, point.y);
         ctx.stroke();
       }
@@ -168,9 +188,21 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
   };
 
   const handleMouseUp = () => {
-    if (!isDrawing || currentPoints.length === 0) {
+    // Disable drawing if not connected or if there's an error
+    if (!isConnected || error) {
       setIsDrawing(false);
       setCurrentPoints([]);
+      setObjectsToErasePreview(new Set()); // Clear preview
+      return;
+    }
+    
+    // Use ref to get latest points to ensure we have all points captured
+    const pointsToUse = currentPointsRef.current.length > 0 ? currentPointsRef.current : currentPoints;
+    
+    if (!isDrawing || pointsToUse.length === 0) {
+      setIsDrawing(false);
+      setCurrentPoints([]);
+      currentPointsRef.current = [];
       setObjectsToErasePreview(new Set()); // Clear preview
       return;
     }
@@ -182,7 +214,7 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
         tool: 'brush',
         color: brushColor,
         size: brushSize,
-        points: currentPoints, // Collection of all points from mouseDown to mouseUp
+        points: pointsToUse, // Collection of all points from mouseDown to mouseUp
       };
       setStrokes((prev) => [...prev, newObject]);
       // Send to collaboration server
@@ -191,8 +223,9 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
       }
     } else if (activeTool === 'eraser') {
       // Find which objects the eraser path intersects with
+      // Use the latest points from ref to ensure we have all points
       setStrokes((prev) => {
-        const objectIdsToErase = findObjectsToErase(prev, currentPoints);
+        const objectIdsToErase = findObjectsToErase(prev, pointsToUse);
         // Remove all objects that were intersected by the eraser
         const newStrokes = prev.filter((object) => !objectIdsToErase.includes(object.id));
         // Send to collaboration server
@@ -205,6 +238,7 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
 
     setIsDrawing(false);
     setCurrentPoints([]);
+    currentPointsRef.current = [];
     setObjectsToErasePreview(new Set()); // Clear preview
   };
 
@@ -214,10 +248,14 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
     } else {
       // Clear preview even if not drawing
       setObjectsToErasePreview(new Set());
+      currentPointsRef.current = [];
     }
   };
 
   const clearCanvas = () => {
+    // Disable clearing if not connected or if there's an error
+    if (!isConnected || error) return;
+    
     setStrokes([]);
     storage.clearStrokes(canvasId);
     setObjectsToErasePreview(new Set()); // Clear preview
@@ -231,6 +269,8 @@ export function useCanvas({ canvasId, activeTool, brushSize, brushColor }: UseCa
     canvasRef,
     strokes,
     isConnected,
+    error,
+    isInitializing,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,
