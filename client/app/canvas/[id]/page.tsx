@@ -5,19 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import Canvas from '@/components/Canvas';
 import Toolbar from '@/components/Toolbar';
 import SessionFullDialog from '@/components/SessionFullDialog';
+import UsernameDialog from '@/components/UsernameDialog';
 import { Tool } from '@/types';
-
-// Generate or retrieve user name from localStorage
-function getUserName(): string {
-  if (typeof window === 'undefined') {
-    return 'User';
-  }
-  const stored = localStorage.getItem('userName');
-  if (stored) return stored;
-  const name = `User ${Math.floor(Math.random() * 9999).toString().padStart(4, '0')}`;
-  localStorage.setItem('userName', name);
-  return name;
-}
 
 export default function CanvasPage() {
   const params = useParams();
@@ -27,16 +16,18 @@ export default function CanvasPage() {
   const [activeTool, setActiveTool] = useState<Tool>('brush');
   const [brushSize, setBrushSize] = useState(5);
   const [brushColor, setBrushColor] = useState('#000000');
-  const [userName, setUserName] = useState<string>('User');
+  const [userName, setUserName] = useState<string>('');
+  const [hasJoined, setHasJoined] = useState(false);
   
   // Track error and initialization state from Canvas component
   const [error, setError] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
 
-  // Generate user name on mount (client-side only)
-  useEffect(() => {
-    setUserName(getUserName());
-  }, []);
+  // Handle user joining with their name
+  const handleJoin = (name: string) => {
+    setUserName(name);
+    setHasJoined(true);
+  };
 
   // Check if error indicates session is full
   const isSessionFull = error && error.toLowerCase().includes('session is full');
@@ -79,6 +70,11 @@ export default function CanvasPage() {
     return null;
   }
 
+  // Show username dialog before joining
+  if (!hasJoined) {
+    return <UsernameDialog onJoin={handleJoin} />;
+  }
+
   return (
     <main
       style={{
@@ -95,9 +91,14 @@ export default function CanvasPage() {
           <p style={{ color: '#6b7280', margin: 0 }}>
             Draw, erase, and create. Your work is automatically saved.
           </p>
-          <p style={{ color: '#9ca3af', margin: '5px 0 0 0', fontSize: '14px' }}>
-            Canvas ID: <code style={{ backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>{canvasId}</code>
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '5px' }}>
+            <p style={{ color: '#9ca3af', margin: 0, fontSize: '14px' }}>
+              Canvas ID: <code style={{ backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>{canvasId}</code>
+            </p>
+            <p style={{ color: '#3b82f6', margin: 0, fontSize: '14px', fontWeight: '500' }}>
+              👤 {userName}
+            </p>
+          </div>
         </header>
 
         {/* Always render Canvas (hidden during init) so it can establish connection */}
