@@ -165,6 +165,44 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle stroke progress (real-time streaming while drawing)
+  socket.on('stroke-progress', (data: { 
+    canvasId: string; 
+    odeidStrokeId: string;
+    stroke: { tool: string; color: string; size: number; points: { x: number; y: number }[] };
+  }) => {
+    const { canvasId, odeidStrokeId, stroke } = data;
+    
+    if (!canvasId || !odeidStrokeId || !stroke) {
+      return; // Silently ignore invalid progress updates
+    }
+
+    const userInfo = canvasUsers.get(canvasId)?.get(socket.id);
+    
+    if (userInfo) {
+      // Broadcast to all OTHER users in the room (no storage needed - ephemeral)
+      socket.to(canvasId).emit('stroke-progress', {
+        canvasId,
+        odeid: socket.id,
+        odeidStrokeId,
+        stroke,
+        timestamp: Date.now(),
+      });
+    }
+  });
+
+  // Handle stroke progress end (when user stops drawing without completing)
+  socket.on('stroke-progress-end', (data: { canvasId: string; odeidStrokeId: string }) => {
+    const { canvasId, odeidStrokeId } = data;
+    
+    if (canvasId && odeidStrokeId) {
+      socket.to(canvasId).emit('stroke-progress-end', {
+        odeid: socket.id,
+        odeidStrokeId,
+      });
+    }
+  });
+
   // Handle disconnect - clean up user presence
   socket.on('disconnect', () => {
     // Remove user from all canvas rooms and notify others

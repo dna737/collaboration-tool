@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { Stroke, CollaborationMessage, CanvasStateMessage, UserPresence, CursorUpdateMessage } from '@/types';
+import { Stroke, CollaborationMessage, CanvasStateMessage, UserPresence, CursorUpdateMessage, StrokeProgressMessage, InProgressStroke } from '@/types';
 
 interface UseCollaborationProps {
   canvasId: string;
@@ -11,6 +11,8 @@ interface UseCollaborationProps {
   onCanvasState: (strokes: Stroke[]) => void;
   onCursorUpdate?: (user: UserPresence) => void;
   onCursorStop?: (odeid: string) => void;
+  onStrokeProgress?: (progressData: InProgressStroke) => void;
+  onStrokeProgressEnd?: (odeid: string, odeidStrokeId: string) => void;
 }
 
 export function useCollaboration({
@@ -22,6 +24,8 @@ export function useCollaboration({
   onCanvasState,
   onCursorUpdate,
   onCursorStop,
+  onStrokeProgress,
+  onStrokeProgressEnd,
 }: UseCollaborationProps) {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +33,7 @@ export function useCollaboration({
   const socketRef = useRef<Socket | null>(null);
   const isLocalActionRef = useRef(false); // Prevent echo loops
   const lastCursorUpdateRef = useRef<number>(0); // For throttling cursor updates
+  const lastStrokeProgressRef = useRef<number>(0); // For throttling stroke progress updates
   
   // Store callbacks in refs to avoid reconnecting when they change
   const callbacksRef = useRef({
@@ -38,6 +43,8 @@ export function useCollaboration({
     onCanvasState,
     onCursorUpdate,
     onCursorStop,
+    onStrokeProgress,
+    onStrokeProgressEnd,
   });
 
   // Update callbacks ref when they change
@@ -49,8 +56,10 @@ export function useCollaboration({
       onCanvasState,
       onCursorUpdate,
       onCursorStop,
+      onStrokeProgress,
+      onStrokeProgressEnd,
     };
-  }, [onStrokeAdded, onStrokeRemoved, onCanvasCleared, onCanvasState, onCursorUpdate, onCursorStop]);
+  }, [onStrokeAdded, onStrokeRemoved, onCanvasCleared, onCanvasState, onCursorUpdate, onCursorStop, onStrokeProgress, onStrokeProgressEnd]);
 
   useEffect(() => {
     if (!canvasId) {
@@ -139,6 +148,28 @@ export function useCollaboration({
     socket.on('cursor-stop', (data: { odeid: string }) => {
       if (callbacksRef.current.onCursorStop) {
         callbacksRef.current.onCursorStop(data.odeid);
+      }
+    });
+
+    // Handle remote stroke progress (real-time streaming)
+    socket.on('stroke-progress', (data: StrokeProgressMessage) => {
+      if (data.canvasId === canvasId && callbacksRef.current.onStrokeProgress) {
+        callbacksRef.current.onStrokeProgress({
+          odeid: data.odeid,
+          odeidStrokeId: data.odeidStrokeId,
+          tool: data.stroke.tool,
+          color: data.stroke.color,
+          size: data.stroke.size,
+          points: data.stroke.points,
+          timestamp: data.timestamp,
+        });
+      }
+    });
+
+    // Handle remote stroke progress end
+    socket.on('stroke-progress-end', (data: { odeid: string; odeidStrokeId: string }) => {
+      if (callbacksRef.current.onStrokeProgressEnd) {
+        callbacksRef.current.onStrokeProgressEnd(data.odeid, data.odeidStrokeId);
       }
     });
 
@@ -233,6 +264,40 @@ export function useCollaboration({
     }
   }, [canvasId]);
 
+  // Send stroke progress to server (throttled to ~50ms)
+  const sendStrokeProgress = useCallback(
+    (odeidStrokeId: string, stroke: { tool: 'brush' | 'eraser'; color: string; size: number; points: { x: number; y: number }[] }) => {
+      const now = Date.now();
+      // Throttle stroke progress updates to avoid flooding the server
+      if (now - lastStrokeProgressRef.current < 50) {
+        return;
+      }
+      lastStrokeProgressRef.current = now;
+
+      if (socketRef.current?.connected && canvasId) {
+        socketRef.current.emit('stroke-progress', {
+          canvasId,
+          odeidStrokeId,
+          stroke,
+        });
+      }
+    },
+    [canvasId]
+  );
+
+  // Send stroke progress end to server
+  const sendStrokeProgressEnd = useCallback(
+    (odeidStrokeId: string) => {
+      if (socketRef.current?.connected && canvasId) {
+        socketRef.current.emit('stroke-progress-end', {
+          canvasId,
+          odeidStrokeId,
+        });
+      }
+    },
+    [canvasId]
+  );
+
   return {
     isConnected,
     error,
@@ -242,6 +307,8 @@ export function useCollaboration({
     sendCanvasCleared,
     sendCursorUpdate,
     sendCursorStop,
+    sendStrokeProgress,
+    sendStrokeProgressEnd,
   };
 }
 

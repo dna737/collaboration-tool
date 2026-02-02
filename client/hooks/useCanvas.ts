@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Stroke, Point, Tool, CanvasId, UserPresence } from '@/types';
+import { Stroke, Point, Tool, CanvasId, UserPresence, InProgressStroke } from '@/types';
 import { renderAllStrokes, getCanvasPoint, findObjectsToErase } from '@/lib/canvas-utils';
 import { storage } from '@/lib/storage';
 import { useCollaboration } from '@/hooks/useCollaboration';
@@ -21,7 +21,10 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
   const currentPointsRef = useRef<Point[]>([]); // Ref to track latest points for eraser
+  const currentStrokeIdRef = useRef<string | null>(null); // Track current stroke ID for streaming
+  const [inProgressStrokes, setInProgressStrokes] = useState<Map<string, InProgressStroke>>(new Map());
   const [objectsToErasePreview, setObjectsToErasePreview] = useState<Set<string>>(new Set());
+  const objectsToEraseRef = useRef<string[]>([]); // Store IDs to erase for use in mouseUp
   const historyRef = useRef<Stroke[][]>([]); // History stack for undo
   const historyIndexRef = useRef(0); // Current position in history
   const isUndoingRef = useRef(false); // Flag to prevent adding to history during undo
@@ -36,12 +39,34 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     sendCanvasCleared,
     sendCursorUpdate,
     sendCursorStop,
+    sendStrokeProgress,
+    sendStrokeProgressEnd,
   } = useCollaboration({
     canvasId: canvasId || '',
     userName,
     onCursorUpdate,
     onCursorStop,
     onStrokeAdded: (stroke: Stroke) => {
+      // Remove the in-progress stroke from this user since it's now committed
+      setInProgressStrokes((prev) => {
+        const newMap = new Map(prev);
+        // Find and remove the in-progress stroke from this sender
+        // We iterate to find by matching - the stroke-added comes without odeid
+        // but we can remove any in-progress that matches the stroke ID pattern
+        prev.forEach((inProgress, odeid) => {
+          // Remove if the points match (the stroke is now committed)
+          if (inProgress.points.length > 0 && stroke.points.length > 0) {
+            const firstPointMatch = 
+              inProgress.points[0].x === stroke.points[0].x && 
+              inProgress.points[0].y === stroke.points[0].y;
+            if (firstPointMatch) {
+              newMap.delete(odeid);
+            }
+          }
+        });
+        return newMap;
+      });
+      
       setStrokes((prev) => {
         // Check if stroke already exists (prevent duplicates)
         if (prev.find((s) => s.id === stroke.id)) {
@@ -62,6 +87,22 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       // Initialize history with the loaded strokes
       historyRef.current = [JSON.parse(JSON.stringify(initialStrokes))];
       historyIndexRef.current = 0;
+    },
+    onStrokeProgress: (progressData: InProgressStroke) => {
+      // Update in-progress strokes from remote users
+      setInProgressStrokes((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(progressData.odeid, progressData);
+        return newMap;
+      });
+    },
+    onStrokeProgressEnd: (odeid: string, odeidStrokeId: string) => {
+      // Remove in-progress stroke when user stops drawing
+      setInProgressStrokes((prev) => {
+        const newMap = new Map(prev);
+        newMap.delete(odeid);
+        return newMap;
+      });
     },
   });
 
@@ -87,8 +128,8 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    renderAllStrokes(ctx, strokes, canvas.width, canvas.height, objectsToErasePreview);
-  }, [strokes, objectsToErasePreview]);
+    renderAllStrokes(ctx, strokes, canvas.width, canvas.height, objectsToErasePreview, inProgressStrokes);
+  }, [strokes, objectsToErasePreview, inProgressStrokes]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -154,6 +195,11 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     setCurrentPoints(initialPoints);
     currentPointsRef.current = initialPoints; // Keep ref in sync
     setObjectsToErasePreview(new Set()); // Clear preview on new eraser action
+    
+    // Generate a stroke ID for streaming (only for brush tool)
+    if (activeTool === 'brush') {
+      currentStrokeIdRef.current = uuidv4();
+    }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -191,10 +237,21 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
         ctx.lineTo(point.x, point.y);
         ctx.stroke();
       }
+      
+      // Stream stroke progress to other users (throttled in sendStrokeProgress)
+      if (canvasId && currentStrokeIdRef.current) {
+        sendStrokeProgress(currentStrokeIdRef.current, {
+          tool: 'brush',
+          color: brushColor,
+          size: brushSize,
+          points: newPoints,
+        });
+      }
     } else if (activeTool === 'eraser') {
       // Update preview: find objects that will be erased
       if (newPoints.length >= 2) {
         const objectIdsToErase = findObjectsToErase(strokes, newPoints);
+        objectsToEraseRef.current = objectIdsToErase; // Store for use in mouseUp
         setObjectsToErasePreview(new Set(objectIdsToErase));
       }
     }
@@ -222,8 +279,9 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
 
     if (activeTool === 'brush') {
       // Create a new canvas object from all points captured during this drawing session
+      // Use the same ID we've been streaming with, so other clients can match it
       const newObject: Stroke = {
-        id: uuidv4(),
+        id: currentStrokeIdRef.current || uuidv4(),
         tool: 'brush',
         color: brushColor,
         size: brushSize,
@@ -235,24 +293,28 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
         sendStrokeAdded(newObject);
       }
     } else if (activeTool === 'eraser') {
-      // Find which objects the eraser path intersects with
-      // Use the latest points from ref to ensure we have all points
-      setStrokes((prev) => {
-        const objectIdsToErase = findObjectsToErase(prev, pointsToUse);
-        // Remove all objects that were intersected by the eraser
-        const newStrokes = prev.filter((object) => !objectIdsToErase.includes(object.id));
+      // Use the stored IDs from preview instead of recalculating
+      // This ensures consistency between preview and actual erase
+      const objectIdsToErase = objectsToEraseRef.current;
+      if (objectIdsToErase.length > 0) {
+        setStrokes((prev) => {
+          // Remove all objects that were intersected by the eraser
+          const newStrokes = prev.filter((object) => !objectIdsToErase.includes(object.id));
+          return newStrokes;
+        });
         // Send to collaboration server
-        if (canvasId && objectIdsToErase.length > 0) {
+        if (canvasId) {
           sendStrokeRemoved(objectIdsToErase);
         }
-        return newStrokes;
-      });
+      }
+      objectsToEraseRef.current = []; // Clear the ref
     }
 
     setIsDrawing(false);
     setCurrentPoints([]);
     currentPointsRef.current = [];
     setObjectsToErasePreview(new Set()); // Clear preview
+    currentStrokeIdRef.current = null; // Clear the stroke ID
     
     // Notify other users that we stopped drawing
     if (canvasId) {
@@ -267,6 +329,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       // Clear preview even if not drawing
       setObjectsToErasePreview(new Set());
       currentPointsRef.current = [];
+      objectsToEraseRef.current = []; // Clear eraser IDs
     }
     // Always notify others when leaving canvas
     if (canvasId) {

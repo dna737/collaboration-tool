@@ -50,3 +50,26 @@ export interface CursorUpdateMessage {
   canvasId: string;
   user: UserPresence;
 }
+
+export interface StrokeProgressMessage {
+  canvasId: string;
+  odeid: string;              // Socket ID of the user drawing
+  odeidStrokeId: string;      // Temporary ID for this in-progress stroke
+  stroke: {
+    tool: 'brush' | 'eraser';
+    color: string;
+    size: number;
+    points: Point[];
+  };
+  timestamp: number;
+}
+
+export interface InProgressStroke {
+  odeid: string;
+  odeidStrokeId: string;
+  tool: 'brush' | 'eraser';
+  color: string;
+  size: number;
+  points: Point[];
+  timestamp: number;
+}

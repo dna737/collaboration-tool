@@ -18,7 +18,7 @@ export default function CanvasPage() {
   const [brushColor, setBrushColor] = useState('#000000');
   const [userName, setUserName] = useState<string>('');
   const [hasJoined, setHasJoined] = useState(false);
-  
+
   // Track error and initialization state from Canvas component
   const [error, setError] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -115,7 +115,7 @@ export default function CanvasPage() {
         )}
 
         {/* Canvas is always rendered but hidden during init/error to establish connection */}
-        <div style={{ 
+        <div style={{
           marginTop: '20px',
           display: isInitializing || isSessionFull ? 'none' : 'block'
         }}>
@@ -143,4 +143,3 @@ export default function CanvasPage() {
     </main>
   );
 }
-
