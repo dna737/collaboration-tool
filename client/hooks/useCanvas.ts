@@ -29,6 +29,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const historyRef = useRef<Stroke[][]>([]); // History stack for undo
   const historyIndexRef = useRef(0); // Current position in history
   const isUndoingRef = useRef(false); // Flag to prevent adding to history during undo
+  const hasLoadedFromStorageRef = useRef(false); // Track if initial load from IndexedDB has happened
 
   // Collaboration hook
   const {
@@ -87,6 +88,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       storage.clearStrokes(canvasId);
     },
     onCanvasState: (initialStrokes: Stroke[]) => {
+      hasLoadedFromStorageRef.current = true; // Server provided state, skip IndexedDB load
       setStrokes(initialStrokes);
       // Initialize history with the loaded strokes
       historyRef.current = [JSON.parse(JSON.stringify(initialStrokes))];
@@ -131,15 +133,26 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     // This prevents unauthorized users from seeing strokes before session check completes
     if (!isConnected) return;
     
+    // Only load once - skip if already loaded from server or previous IndexedDB load
+    if (hasLoadedFromStorageRef.current) return;
+    
     // Load from IndexedDB as fallback/cache
     const loadFromStorage = async () => {
       try {
         const loadedStrokes = await storage.loadStrokes(canvasId);
-        if (loadedStrokes.length > 0 && strokes.length === 0) {
-          setStrokes(loadedStrokes);
-          // Initialize history with the loaded strokes
-          historyRef.current = [JSON.parse(JSON.stringify(loadedStrokes))];
-          historyIndexRef.current = 0;
+        if (loadedStrokes.length > 0) {
+          // Use functional update to check current state (avoids stale closure)
+          setStrokes((currentStrokes) => {
+            // Only use IndexedDB data if current strokes are empty
+            if (currentStrokes.length === 0) {
+              hasLoadedFromStorageRef.current = true;
+              // Initialize history with the loaded strokes
+              historyRef.current = [JSON.parse(JSON.stringify(loadedStrokes))];
+              historyIndexRef.current = 0;
+              return loadedStrokes;
+            }
+            return currentStrokes;
+          });
         }
       } catch (error) {
         console.error('Failed to load strokes from storage:', error);
@@ -147,7 +160,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     };
     
     loadFromStorage();
-  }, [canvasId, isConnected, strokes.length]);
+  }, [canvasId, isConnected]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
