@@ -365,6 +365,11 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       setObjectsToErasePreview(new Set());
       currentPointsRef.current = [];
       objectsToEraseRef.current = []; // Clear eraser IDs
+      
+      // Notify other users that eraser preview ended
+      if (canvasId) {
+        sendEraserPreviewEnd();
+      }
     }
     // Always notify others when leaving canvas
     if (canvasId) {
