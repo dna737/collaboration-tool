@@ -273,7 +273,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
 
     // Send cursor update to other users while drawing
     if (canvasId) {
-      sendCursorUpdate(point, true);
+      sendCursorUpdate(point, true, activeTool);
     }
 
     if (activeTool === 'brush') {

@@ -134,8 +134,8 @@ io.on('connection', (socket) => {
   });
 
   // Handle cursor/drawing updates
-  socket.on('cursor-update', (data: { canvasId: string; position: { x: number; y: number }; isDrawing: boolean }) => {
-    const { canvasId, position, isDrawing } = data;
+  socket.on('cursor-update', (data: { canvasId: string; position: { x: number; y: number }; isDrawing: boolean; activeTool?: 'brush' | 'eraser' }) => {
+    const { canvasId, position, isDrawing, activeTool } = data;
     
     if (!canvasId || !position) {
       return; // Silently ignore invalid cursor updates
@@ -152,6 +152,7 @@ io.on('connection', (socket) => {
           userName: userInfo.userName,
           position,
           isDrawing,
+          activeTool,
           timestamp: Date.now(),
         },
       });

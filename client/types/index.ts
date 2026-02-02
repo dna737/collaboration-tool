@@ -43,6 +43,7 @@ export interface UserPresence {
   userName: string;
   position: { x: number; y: number };
   isDrawing: boolean;
+  activeTool?: Tool;
   timestamp: number;
 }
 

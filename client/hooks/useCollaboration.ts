@@ -261,7 +261,7 @@ export function useCollaboration({
 
   // Send cursor update to server (throttled to ~50ms)
   const sendCursorUpdate = useCallback(
-    (position: { x: number; y: number }, isDrawing: boolean) => {
+    (position: { x: number; y: number }, isDrawing: boolean, activeTool?: 'brush' | 'eraser') => {
       const now = Date.now();
       // Throttle cursor updates to avoid flooding the server
       if (now - lastCursorUpdateRef.current < 50) {
@@ -274,6 +274,7 @@ export function useCollaboration({
           canvasId,
           position,
           isDrawing,
+          activeTool,
         });
       }
     },

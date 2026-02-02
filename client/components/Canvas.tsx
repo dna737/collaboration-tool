@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { Brush, Eraser } from 'lucide-react';
 import { useCanvas } from '@/hooks/useCanvas';
 import { Tool, UserPresence } from '@/types';
 
@@ -371,21 +372,28 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
               alignItems: 'center',
             }}
           >
-            {/* Flare glow effect */}
+            {/* Tool icon */}
             <div
               style={{
-                width: 12,
-                height: 12,
-                borderRadius: '50%',
-                backgroundColor: '#3b82f6',
-                boxShadow: '0 0 12px 4px rgba(59, 130, 246, 0.6)',
+                width: 20,
+                height: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                filter: 'drop-shadow(0 0 4px rgba(59, 130, 246, 0.8))',
                 animation: 'pulse 1.5s ease-in-out infinite',
               }}
-            />
+            >
+              {cursor.activeTool === 'eraser' ? (
+                <Eraser size={16} color="#3b82f6" />
+              ) : (
+                <Brush size={16} color="#3b82f6" />
+              )}
+            </div>
             {/* User name label */}
             <div
               style={{
-                marginTop: 4,
+                marginTop: 2,
                 padding: '2px 8px',
                 backgroundColor: '#3b82f6',
                 color: 'white',
