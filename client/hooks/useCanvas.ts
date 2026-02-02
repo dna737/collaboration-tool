@@ -30,6 +30,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const historyIndexRef = useRef(0); // Current position in history
   const isUndoingRef = useRef(false); // Flag to prevent adding to history during undo
   const hasLoadedFromStorageRef = useRef(false); // Track if initial load from IndexedDB has happened
+  const strokesRef = useRef<Stroke[]>([]); // Ref to track latest strokes for undo sync
 
   // Collaboration hook
   const {
@@ -190,6 +191,11 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     return () => clearTimeout(timer);
   }, [strokes, canvasId]);
 
+  // Keep strokesRef in sync with strokes for undo sync
+  useEffect(() => {
+    strokesRef.current = strokes;
+  }, [strokes]);
+
   // Add current state to history when strokes change (but not during undo)
   useEffect(() => {
     if (!isUndoingRef.current && historyRef.current.length > 0) {
@@ -223,7 +229,27 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
         if (historyIndexRef.current > 0) {
           isUndoingRef.current = true;
           historyIndexRef.current--;
-          const previousState = historyRef.current[historyIndexRef.current];
+          const previousState = historyRef.current[historyIndexRef.current] as Stroke[];
+          const currentStrokes = strokesRef.current;
+
+          // Compute diff for syncing with other collaborators
+          const currentStrokeIds = new Set(currentStrokes.map(s => s.id));
+          const previousStrokeIds = new Set(previousState.map(s => s.id));
+
+          // Strokes to remove (exist in current but not in previous)
+          const strokesRemoved = currentStrokes.filter(s => !previousStrokeIds.has(s.id));
+
+          // Strokes to add back (exist in previous but not in current)
+          const strokesAdded = previousState.filter(s => !currentStrokeIds.has(s.id));
+
+          // Emit websocket events to sync with other collaborators
+          if (canvasId) {
+            if (strokesRemoved.length > 0) {
+              sendStrokeRemoved(strokesRemoved.map(s => s.id));
+            }
+            strokesAdded.forEach(stroke => sendStrokeAdded(stroke));
+          }
+
           setStrokes(JSON.parse(JSON.stringify(previousState))); // Deep copy
         }
       }
@@ -231,7 +257,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isConnected, error]);
+  }, [isConnected, error, canvasId, sendStrokeRemoved, sendStrokeAdded]);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     // Disable drawing if not connected or if there's an error
