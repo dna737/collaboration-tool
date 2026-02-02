@@ -15,6 +15,10 @@ interface UseCanvasProps {
   onCursorStop?: (nodeId: string) => void;
 }
 
+type LocalAction =
+  | { type: 'add'; stroke: Stroke }
+  | { type: 'remove'; strokes: Stroke[] };
+
 export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColor, onCursorUpdate, onCursorStop }: UseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
@@ -31,6 +35,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const isUndoingRef = useRef(false); // Flag to prevent adding to history during undo
   const hasLoadedFromStorageRef = useRef(false); // Track if initial load from IndexedDB has happened
   const strokesRef = useRef<Stroke[]>([]); // Ref to track latest strokes for undo sync
+  const localActionHistoryRef = useRef<LocalAction[]>([]); // Stack of local actions for per-user undo
 
   // Collaboration hook
   const {
@@ -225,33 +230,33 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
 
-        // Can only undo if we're not at the beginning of history
-        if (historyIndexRef.current > 0) {
-          isUndoingRef.current = true;
-          historyIndexRef.current--;
-          const previousState = historyRef.current[historyIndexRef.current] as Stroke[];
-          const currentStrokes = strokesRef.current;
+        const action = localActionHistoryRef.current.pop();
+        if (!action) return;
 
-          // Compute diff for syncing with other collaborators
-          const currentStrokeIds = new Set(currentStrokes.map(s => s.id));
-          const previousStrokeIds = new Set(previousState.map(s => s.id));
+        isUndoingRef.current = true;
+        const currentStrokes = strokesRef.current;
 
-          // Strokes to remove (exist in current but not in previous)
-          const strokesRemoved = currentStrokes.filter(s => !previousStrokeIds.has(s.id));
+        if (action.type === 'add') {
+          const exists = currentStrokes.some((stroke) => stroke.id === action.stroke.id);
+          if (!exists) return;
 
-          // Strokes to add back (exist in previous but not in current)
-          const strokesAdded = previousState.filter(s => !currentStrokeIds.has(s.id));
-
-          // Emit websocket events to sync with other collaborators
+          const updatedStrokes = currentStrokes.filter((stroke) => stroke.id !== action.stroke.id);
           if (canvasId) {
-            if (strokesRemoved.length > 0) {
-              sendStrokeRemoved(strokesRemoved.map(s => s.id));
-            }
-            strokesAdded.forEach(stroke => sendStrokeAdded(stroke));
+            sendStrokeRemoved([action.stroke.id]);
           }
-
-          setStrokes(JSON.parse(JSON.stringify(previousState))); // Deep copy
+          setStrokes(updatedStrokes);
+          return;
         }
+
+        const currentStrokeIds = new Set(currentStrokes.map((stroke) => stroke.id));
+        const strokesToRestore = action.strokes.filter((stroke) => !currentStrokeIds.has(stroke.id));
+        if (strokesToRestore.length === 0) return;
+
+        const updatedStrokes = [...currentStrokes, ...strokesToRestore];
+        if (canvasId) {
+          strokesToRestore.forEach((stroke) => sendStrokeAdded(stroke));
+        }
+        setStrokes(updatedStrokes);
       }
     };
 
@@ -369,6 +374,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
         size: brushSize,
         points: pointsToUse, // Collection of all points from mouseDown to mouseUp
       };
+      localActionHistoryRef.current.push({ type: 'add', stroke: newObject });
       setStrokes((prev) => [...prev, newObject]);
       // Send to collaboration server
       if (canvasId) {
@@ -379,6 +385,11 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       // This ensures consistency between preview and actual erase
       const objectIdsToErase = objectsToEraseRef.current;
       if (objectIdsToErase.length > 0) {
+        const currentStrokes = strokesRef.current;
+        const strokesToRemove = currentStrokes.filter((object) => objectIdsToErase.includes(object.id));
+        if (strokesToRemove.length > 0) {
+          localActionHistoryRef.current.push({ type: 'remove', strokes: strokesToRemove });
+        }
         setStrokes((prev) => {
           // Remove all objects that were intersected by the eraser
           const newStrokes = prev.filter((object) => !objectIdsToErase.includes(object.id));
@@ -432,7 +443,11 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const clearCanvas = async () => {
     // Disable clearing if not connected or if there's an error
     if (!isConnected || error) return;
-    
+
+    const currentStrokes = strokesRef.current;
+    if (currentStrokes.length > 0) {
+      localActionHistoryRef.current.push({ type: 'remove', strokes: currentStrokes });
+    }
     setStrokes([]);
     // Fire and forget - errors are logged in the storage module
     storage.clearStrokes(canvasId);
