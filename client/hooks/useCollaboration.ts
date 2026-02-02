@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { Stroke, CollaborationMessage, CanvasStateMessage, UserPresence, CursorUpdateMessage, StrokeProgressMessage, InProgressStroke } from '@/types';
+import { Stroke, CollaborationMessage, CanvasStateMessage, UserPresence, CursorUpdateMessage, StrokeProgressMessage, InProgressStroke, EraserPreviewMessage } from '@/types';
 
 interface UseCollaborationProps {
   canvasId: string;
@@ -13,6 +13,8 @@ interface UseCollaborationProps {
   onCursorStop?: (odeid: string) => void;
   onStrokeProgress?: (progressData: InProgressStroke) => void;
   onStrokeProgressEnd?: (odeid: string, odeidStrokeId: string) => void;
+  onEraserPreview?: (odeid: string, strokeIds: string[]) => void;
+  onEraserPreviewEnd?: (odeid: string) => void;
 }
 
 export function useCollaboration({
@@ -26,6 +28,8 @@ export function useCollaboration({
   onCursorStop,
   onStrokeProgress,
   onStrokeProgressEnd,
+  onEraserPreview,
+  onEraserPreviewEnd,
 }: UseCollaborationProps) {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +38,7 @@ export function useCollaboration({
   const isLocalActionRef = useRef(false); // Prevent echo loops
   const lastCursorUpdateRef = useRef<number>(0); // For throttling cursor updates
   const lastStrokeProgressRef = useRef<number>(0); // For throttling stroke progress updates
+  const lastEraserPreviewRef = useRef<number>(0); // For throttling eraser preview updates
   
   // Store callbacks in refs to avoid reconnecting when they change
   const callbacksRef = useRef({
@@ -45,6 +50,8 @@ export function useCollaboration({
     onCursorStop,
     onStrokeProgress,
     onStrokeProgressEnd,
+    onEraserPreview,
+    onEraserPreviewEnd,
   });
 
   // Update callbacks ref when they change
@@ -58,8 +65,10 @@ export function useCollaboration({
       onCursorStop,
       onStrokeProgress,
       onStrokeProgressEnd,
+      onEraserPreview,
+      onEraserPreviewEnd,
     };
-  }, [onStrokeAdded, onStrokeRemoved, onCanvasCleared, onCanvasState, onCursorUpdate, onCursorStop, onStrokeProgress, onStrokeProgressEnd]);
+  }, [onStrokeAdded, onStrokeRemoved, onCanvasCleared, onCanvasState, onCursorUpdate, onCursorStop, onStrokeProgress, onStrokeProgressEnd, onEraserPreview, onEraserPreviewEnd]);
 
   useEffect(() => {
     if (!canvasId) {
@@ -170,6 +179,20 @@ export function useCollaboration({
     socket.on('stroke-progress-end', (data: { odeid: string; odeidStrokeId: string }) => {
       if (callbacksRef.current.onStrokeProgressEnd) {
         callbacksRef.current.onStrokeProgressEnd(data.odeid, data.odeidStrokeId);
+      }
+    });
+
+    // Handle remote eraser preview (real-time streaming of strokes to be erased)
+    socket.on('eraser-preview', (data: EraserPreviewMessage) => {
+      if (data.canvasId === canvasId && callbacksRef.current.onEraserPreview) {
+        callbacksRef.current.onEraserPreview(data.odeid, data.strokeIds);
+      }
+    });
+
+    // Handle remote eraser preview end
+    socket.on('eraser-preview-end', (data: { odeid: string }) => {
+      if (callbacksRef.current.onEraserPreviewEnd) {
+        callbacksRef.current.onEraserPreviewEnd(data.odeid);
       }
     });
 
@@ -298,6 +321,35 @@ export function useCollaboration({
     [canvasId]
   );
 
+  // Send eraser preview to server (throttled to ~50ms)
+  const sendEraserPreview = useCallback(
+    (strokeIds: string[]) => {
+      const now = Date.now();
+      // Throttle eraser preview updates to avoid flooding the server
+      if (now - lastEraserPreviewRef.current < 50) {
+        return;
+      }
+      lastEraserPreviewRef.current = now;
+
+      if (socketRef.current?.connected && canvasId) {
+        socketRef.current.emit('eraser-preview', {
+          canvasId,
+          strokeIds,
+        });
+      }
+    },
+    [canvasId]
+  );
+
+  // Send eraser preview end to server
+  const sendEraserPreviewEnd = useCallback(() => {
+    if (socketRef.current?.connected && canvasId) {
+      socketRef.current.emit('eraser-preview-end', {
+        canvasId,
+      });
+    }
+  }, [canvasId]);
+
   return {
     isConnected,
     error,
@@ -309,6 +361,8 @@ export function useCollaboration({
     sendCursorStop,
     sendStrokeProgress,
     sendStrokeProgressEnd,
+    sendEraserPreview,
+    sendEraserPreviewEnd,
   };
 }
 

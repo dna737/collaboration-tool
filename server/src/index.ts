@@ -203,6 +203,34 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle eraser preview (real-time streaming of strokes that will be erased)
+  socket.on('eraser-preview', (data: { canvasId: string; strokeIds: string[] }) => {
+    const { canvasId, strokeIds } = data;
+    
+    if (!canvasId || !Array.isArray(strokeIds)) {
+      return; // Silently ignore invalid eraser preview updates
+    }
+
+    // Broadcast to all OTHER users in the room (no storage needed - ephemeral)
+    socket.to(canvasId).emit('eraser-preview', {
+      canvasId,
+      odeid: socket.id,
+      strokeIds,
+      timestamp: Date.now(),
+    });
+  });
+
+  // Handle eraser preview end (when user releases eraser or leaves canvas)
+  socket.on('eraser-preview-end', (data: { canvasId: string }) => {
+    const { canvasId } = data;
+    
+    if (canvasId) {
+      socket.to(canvasId).emit('eraser-preview-end', {
+        odeid: socket.id,
+      });
+    }
+  });
+
   // Handle disconnect - clean up user presence
   socket.on('disconnect', () => {
     // Remove user from all canvas rooms and notify others
@@ -210,6 +238,7 @@ io.on('connection', (socket) => {
       if (users.has(socket.id)) {
         users.delete(socket.id);
         io.to(canvasId).emit('cursor-stop', { odeid: socket.id });
+        io.to(canvasId).emit('eraser-preview-end', { odeid: socket.id });
       }
     });
     console.log('Client disconnected:', socket.id);

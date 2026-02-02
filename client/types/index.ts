@@ -73,3 +73,10 @@ export interface InProgressStroke {
   points: Point[];
   timestamp: number;
 }
+
+export interface EraserPreviewMessage {
+  canvasId: string;
+  odeid: string;
+  strokeIds: string[];
+  timestamp: number;
+}

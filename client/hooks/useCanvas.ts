@@ -24,6 +24,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const currentStrokeIdRef = useRef<string | null>(null); // Track current stroke ID for streaming
   const [inProgressStrokes, setInProgressStrokes] = useState<Map<string, InProgressStroke>>(new Map());
   const [objectsToErasePreview, setObjectsToErasePreview] = useState<Set<string>>(new Set());
+  const [remoteEraserPreviews, setRemoteEraserPreviews] = useState<Map<string, Set<string>>>(new Map()); // odeid -> strokeIds
   const objectsToEraseRef = useRef<string[]>([]); // Store IDs to erase for use in mouseUp
   const historyRef = useRef<Stroke[][]>([]); // History stack for undo
   const historyIndexRef = useRef(0); // Current position in history
@@ -41,6 +42,8 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     sendCursorStop,
     sendStrokeProgress,
     sendStrokeProgressEnd,
+    sendEraserPreview,
+    sendEraserPreviewEnd,
   } = useCollaboration({
     canvasId: canvasId || '',
     userName,
@@ -104,6 +107,22 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
         return newMap;
       });
     },
+    onEraserPreview: (odeid: string, strokeIds: string[]) => {
+      // Update remote eraser previews
+      setRemoteEraserPreviews((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(odeid, new Set(strokeIds));
+        return newMap;
+      });
+    },
+    onEraserPreviewEnd: (odeid: string) => {
+      // Clear remote eraser preview when user stops erasing
+      setRemoteEraserPreviews((prev) => {
+        const newMap = new Map(prev);
+        newMap.delete(odeid);
+        return newMap;
+      });
+    },
   });
 
   useEffect(() => {
@@ -128,8 +147,14 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    renderAllStrokes(ctx, strokes, canvas.width, canvas.height, objectsToErasePreview, inProgressStrokes);
-  }, [strokes, objectsToErasePreview, inProgressStrokes]);
+    // Combine local and remote eraser previews
+    const combinedEraserPreview = new Set(objectsToErasePreview);
+    remoteEraserPreviews.forEach((strokeIds) => {
+      strokeIds.forEach((id) => combinedEraserPreview.add(id));
+    });
+
+    renderAllStrokes(ctx, strokes, canvas.width, canvas.height, combinedEraserPreview, inProgressStrokes);
+  }, [strokes, objectsToErasePreview, remoteEraserPreviews, inProgressStrokes]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -253,6 +278,11 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
         const objectIdsToErase = findObjectsToErase(strokes, newPoints);
         objectsToEraseRef.current = objectIdsToErase; // Store for use in mouseUp
         setObjectsToErasePreview(new Set(objectIdsToErase));
+        
+        // Stream eraser preview to other users (throttled in sendEraserPreview)
+        if (canvasId) {
+          sendEraserPreview(objectIdsToErase);
+        }
       }
     }
   };
@@ -308,6 +338,11 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
         }
       }
       objectsToEraseRef.current = []; // Clear the ref
+      
+      // Notify other users that eraser preview ended
+      if (canvasId) {
+        sendEraserPreviewEnd();
+      }
     }
 
     setIsDrawing(false);
