@@ -59,7 +59,7 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
     onCursorStop: handleCursorStop,
   });
 
-  // Clean up stale cursors (cursors not updated in 3 seconds)
+  // Clean up stale cursors (cursors not updated in 1.5 seconds)
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
@@ -67,14 +67,14 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
         const next = new Map(prev);
         let changed = false;
         prev.forEach((cursor, nodeId) => {
-          if (now - cursor.timestamp > 3000) {
+          if (now - cursor.timestamp > 1500) {
             next.delete(nodeId);
             changed = true;
           }
         });
         return changed ? next : prev;
       });
-    }, 1000);
+    }, 500);
     return () => clearInterval(interval);
   }, []);
 
