@@ -83,6 +83,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     },
     onCanvasCleared: () => {
       setStrokes([]);
+      // Fire and forget - errors are logged in the storage module
       storage.clearStrokes(canvasId);
     },
     onCanvasState: (initialStrokes: Stroke[]) => {
@@ -126,18 +127,26 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   });
 
   useEffect(() => {
-    // Only load from localStorage if user is connected (authorized to see the canvas)
+    // Only load from IndexedDB if user is connected (authorized to see the canvas)
     // This prevents unauthorized users from seeing strokes before session check completes
     if (!isConnected) return;
     
-    // Load from localStorage as fallback/cache
-    const loadedStrokes = storage.loadStrokes(canvasId);
-    if (loadedStrokes.length > 0 && strokes.length === 0) {
-      setStrokes(loadedStrokes);
-      // Initialize history with the loaded strokes
-      historyRef.current = [JSON.parse(JSON.stringify(loadedStrokes))];
-      historyIndexRef.current = 0;
-    }
+    // Load from IndexedDB as fallback/cache
+    const loadFromStorage = async () => {
+      try {
+        const loadedStrokes = await storage.loadStrokes(canvasId);
+        if (loadedStrokes.length > 0 && strokes.length === 0) {
+          setStrokes(loadedStrokes);
+          // Initialize history with the loaded strokes
+          historyRef.current = [JSON.parse(JSON.stringify(loadedStrokes))];
+          historyIndexRef.current = 0;
+        }
+      } catch (error) {
+        console.error('Failed to load strokes from storage:', error);
+      }
+    };
+    
+    loadFromStorage();
   }, [canvasId, isConnected, strokes.length]);
 
   useEffect(() => {
@@ -157,8 +166,12 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   }, [strokes, objectsToErasePreview, remoteEraserPreviews, inProgressStrokes]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      storage.saveStrokes(strokes, canvasId);
+    const timer = setTimeout(async () => {
+      try {
+        await storage.saveStrokes(strokes, canvasId);
+      } catch (error) {
+        console.error('Failed to save strokes to storage:', error);
+      }
     }, 500);
 
     return () => clearTimeout(timer);
@@ -377,11 +390,12 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     }
   };
 
-  const clearCanvas = () => {
+  const clearCanvas = async () => {
     // Disable clearing if not connected or if there's an error
     if (!isConnected || error) return;
     
     setStrokes([]);
+    // Fire and forget - errors are logged in the storage module
     storage.clearStrokes(canvasId);
     setObjectsToErasePreview(new Set()); // Clear preview
     // Send to collaboration server
