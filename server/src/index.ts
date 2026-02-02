@@ -21,7 +21,7 @@ const MAX_USERS_PER_SESSION = 10;
 const canvasStates = new Map<string, any[]>();
 
 // Track users per canvas room: Map<canvasId, Map<socketId, UserInfo>>
-const canvasUsers = new Map<string, Map<string, { odeid: string; userName: string }>>();
+const canvasUsers = new Map<string, Map<string, { nodeId: string; userName: string }>>();
 
 // Helper to get or create canvas state
 function getCanvasState(canvasId: string): any[] {
@@ -65,7 +65,7 @@ io.on('connection', (socket) => {
     if (!canvasUsers.has(canvasId)) {
       canvasUsers.set(canvasId, new Map());
     }
-    canvasUsers.get(canvasId)!.set(socket.id, { odeid: socket.id, userName });
+    canvasUsers.get(canvasId)!.set(socket.id, { nodeId: socket.id, userName });
 
     const newRoomSize = io.sockets.adapter.rooms.get(canvasId)?.size || 0;
     console.log(`Client ${socket.id} (${userName}) joined canvas ${canvasId} (${newRoomSize}/${MAX_USERS_PER_SESSION})`);
@@ -148,7 +148,7 @@ io.on('connection', (socket) => {
       socket.to(canvasId).emit('cursor-update', {
         canvasId,
         user: {
-          odeid: socket.id,
+          nodeId: socket.id,
           userName: userInfo.userName,
           position,
           isDrawing,
@@ -161,19 +161,19 @@ io.on('connection', (socket) => {
   // Handle cursor stop (when user stops drawing or leaves canvas)
   socket.on('cursor-stop', (data: { canvasId: string }) => {
     if (data.canvasId) {
-      socket.to(data.canvasId).emit('cursor-stop', { odeid: socket.id });
+      socket.to(data.canvasId).emit('cursor-stop', { nodeId: socket.id });
     }
   });
 
   // Handle stroke progress (real-time streaming while drawing)
   socket.on('stroke-progress', (data: { 
     canvasId: string; 
-    odeidStrokeId: string;
+    nodeIdStrokeId: string;
     stroke: { tool: string; color: string; size: number; points: { x: number; y: number }[] };
   }) => {
-    const { canvasId, odeidStrokeId, stroke } = data;
+    const { canvasId, nodeIdStrokeId, stroke } = data;
     
-    if (!canvasId || !odeidStrokeId || !stroke) {
+    if (!canvasId || !nodeIdStrokeId || !stroke) {
       return; // Silently ignore invalid progress updates
     }
 
@@ -183,8 +183,8 @@ io.on('connection', (socket) => {
       // Broadcast to all OTHER users in the room (no storage needed - ephemeral)
       socket.to(canvasId).emit('stroke-progress', {
         canvasId,
-        odeid: socket.id,
-        odeidStrokeId,
+        nodeId: socket.id,
+        nodeIdStrokeId,
         stroke,
         timestamp: Date.now(),
       });
@@ -192,13 +192,13 @@ io.on('connection', (socket) => {
   });
 
   // Handle stroke progress end (when user stops drawing without completing)
-  socket.on('stroke-progress-end', (data: { canvasId: string; odeidStrokeId: string }) => {
-    const { canvasId, odeidStrokeId } = data;
+  socket.on('stroke-progress-end', (data: { canvasId: string; nodeIdStrokeId: string }) => {
+    const { canvasId, nodeIdStrokeId } = data;
     
-    if (canvasId && odeidStrokeId) {
+    if (canvasId && nodeIdStrokeId) {
       socket.to(canvasId).emit('stroke-progress-end', {
-        odeid: socket.id,
-        odeidStrokeId,
+        nodeId: socket.id,
+        nodeIdStrokeId,
       });
     }
   });
@@ -214,7 +214,7 @@ io.on('connection', (socket) => {
     // Broadcast to all OTHER users in the room (no storage needed - ephemeral)
     socket.to(canvasId).emit('eraser-preview', {
       canvasId,
-      odeid: socket.id,
+      nodeId: socket.id,
       strokeIds,
       timestamp: Date.now(),
     });
@@ -226,7 +226,7 @@ io.on('connection', (socket) => {
     
     if (canvasId) {
       socket.to(canvasId).emit('eraser-preview-end', {
-        odeid: socket.id,
+        nodeId: socket.id,
       });
     }
   });
@@ -237,8 +237,8 @@ io.on('connection', (socket) => {
     canvasUsers.forEach((users, canvasId) => {
       if (users.has(socket.id)) {
         users.delete(socket.id);
-        io.to(canvasId).emit('cursor-stop', { odeid: socket.id });
-        io.to(canvasId).emit('eraser-preview-end', { odeid: socket.id });
+        io.to(canvasId).emit('cursor-stop', { nodeId: socket.id });
+        io.to(canvasId).emit('eraser-preview-end', { nodeId: socket.id });
       }
     });
     console.log('Client disconnected:', socket.id);

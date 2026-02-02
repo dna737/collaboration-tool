@@ -27,14 +27,14 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
 
   // Handle cursor update from other users
   const handleCursorUpdate = useCallback((user: UserPresence) => {
-    setRemoteCursors(prev => new Map(prev).set(user.odeid, user));
+    setRemoteCursors(prev => new Map(prev).set(user.nodeId, user));
   }, []);
 
   // Handle cursor stop from other users
-  const handleCursorStop = useCallback((odeid: string) => {
+  const handleCursorStop = useCallback((nodeId: string) => {
     setRemoteCursors(prev => {
       const next = new Map(prev);
-      next.delete(odeid);
+      next.delete(nodeId);
       return next;
     });
   }, []);
@@ -66,9 +66,9 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
       setRemoteCursors(prev => {
         const next = new Map(prev);
         let changed = false;
-        prev.forEach((cursor, odeid) => {
+        prev.forEach((cursor, nodeId) => {
           if (now - cursor.timestamp > 3000) {
-            next.delete(odeid);
+            next.delete(nodeId);
             changed = true;
           }
         });
@@ -358,7 +358,7 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
       {Array.from(remoteCursors.values()).map((cursor) => (
         cursor.isDrawing && (
           <div
-            key={cursor.odeid}
+            key={cursor.nodeId}
             style={{
               position: 'absolute',
               left: cursor.position.x,

@@ -12,7 +12,7 @@ interface UseCanvasProps {
   brushSize: number;
   brushColor: string;
   onCursorUpdate?: (user: UserPresence) => void;
-  onCursorStop?: (odeid: string) => void;
+  onCursorStop?: (nodeId: string) => void;
 }
 
 export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColor, onCursorUpdate, onCursorStop }: UseCanvasProps) {
@@ -24,7 +24,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const currentStrokeIdRef = useRef<string | null>(null); // Track current stroke ID for streaming
   const [inProgressStrokes, setInProgressStrokes] = useState<Map<string, InProgressStroke>>(new Map());
   const [objectsToErasePreview, setObjectsToErasePreview] = useState<Set<string>>(new Set());
-  const [remoteEraserPreviews, setRemoteEraserPreviews] = useState<Map<string, Set<string>>>(new Map()); // odeid -> strokeIds
+  const [remoteEraserPreviews, setRemoteEraserPreviews] = useState<Map<string, Set<string>>>(new Map()); // nodeId -> strokeIds
   const objectsToEraseRef = useRef<string[]>([]); // Store IDs to erase for use in mouseUp
   const historyRef = useRef<Stroke[][]>([]); // History stack for undo
   const historyIndexRef = useRef(0); // Current position in history
@@ -54,16 +54,16 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       setInProgressStrokes((prev) => {
         const newMap = new Map(prev);
         // Find and remove the in-progress stroke from this sender
-        // We iterate to find by matching - the stroke-added comes without odeid
+        // We iterate to find by matching - the stroke-added comes without nodeId
         // but we can remove any in-progress that matches the stroke ID pattern
-        prev.forEach((inProgress, odeid) => {
+        prev.forEach((inProgress, nodeId) => {
           // Remove if the points match (the stroke is now committed)
           if (inProgress.points.length > 0 && stroke.points.length > 0) {
             const firstPointMatch = 
               inProgress.points[0].x === stroke.points[0].x && 
               inProgress.points[0].y === stroke.points[0].y;
             if (firstPointMatch) {
-              newMap.delete(odeid);
+              newMap.delete(nodeId);
             }
           }
         });
@@ -95,31 +95,31 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       // Update in-progress strokes from remote users
       setInProgressStrokes((prev) => {
         const newMap = new Map(prev);
-        newMap.set(progressData.odeid, progressData);
+        newMap.set(progressData.nodeId, progressData);
         return newMap;
       });
     },
-    onStrokeProgressEnd: (odeid: string, odeidStrokeId: string) => {
+    onStrokeProgressEnd: (nodeId: string, nodeIdStrokeId: string) => {
       // Remove in-progress stroke when user stops drawing
       setInProgressStrokes((prev) => {
         const newMap = new Map(prev);
-        newMap.delete(odeid);
+        newMap.delete(nodeId);
         return newMap;
       });
     },
-    onEraserPreview: (odeid: string, strokeIds: string[]) => {
+    onEraserPreview: (nodeId: string, strokeIds: string[]) => {
       // Update remote eraser previews
       setRemoteEraserPreviews((prev) => {
         const newMap = new Map(prev);
-        newMap.set(odeid, new Set(strokeIds));
+        newMap.set(nodeId, new Set(strokeIds));
         return newMap;
       });
     },
-    onEraserPreviewEnd: (odeid: string) => {
+    onEraserPreviewEnd: (nodeId: string) => {
       // Clear remote eraser preview when user stops erasing
       setRemoteEraserPreviews((prev) => {
         const newMap = new Map(prev);
-        newMap.delete(odeid);
+        newMap.delete(nodeId);
         return newMap;
       });
     },

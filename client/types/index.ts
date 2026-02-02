@@ -39,7 +39,7 @@ export interface CanvasStateMessage {
 }
 
 export interface UserPresence {
-  odeid: string;
+  nodeId: string;
   userName: string;
   position: { x: number; y: number };
   isDrawing: boolean;
@@ -53,8 +53,8 @@ export interface CursorUpdateMessage {
 
 export interface StrokeProgressMessage {
   canvasId: string;
-  odeid: string;              // Socket ID of the user drawing
-  odeidStrokeId: string;      // Temporary ID for this in-progress stroke
+  nodeId: string;              // Socket ID of the user drawing
+  nodeIdStrokeId: string;      // Temporary ID for this in-progress stroke
   stroke: {
     tool: 'brush' | 'eraser';
     color: string;
@@ -65,8 +65,8 @@ export interface StrokeProgressMessage {
 }
 
 export interface InProgressStroke {
-  odeid: string;
-  odeidStrokeId: string;
+  nodeId: string;
+  nodeIdStrokeId: string;
   tool: 'brush' | 'eraser';
   color: string;
   size: number;
@@ -76,7 +76,7 @@ export interface InProgressStroke {
 
 export interface EraserPreviewMessage {
   canvasId: string;
-  odeid: string;
+  nodeId: string;
   strokeIds: string[];
   timestamp: number;
 }

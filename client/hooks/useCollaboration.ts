@@ -10,11 +10,11 @@ interface UseCollaborationProps {
   onCanvasCleared: () => void;
   onCanvasState: (strokes: Stroke[]) => void;
   onCursorUpdate?: (user: UserPresence) => void;
-  onCursorStop?: (odeid: string) => void;
+  onCursorStop?: (nodeId: string) => void;
   onStrokeProgress?: (progressData: InProgressStroke) => void;
-  onStrokeProgressEnd?: (odeid: string, odeidStrokeId: string) => void;
-  onEraserPreview?: (odeid: string, strokeIds: string[]) => void;
-  onEraserPreviewEnd?: (odeid: string) => void;
+  onStrokeProgressEnd?: (nodeId: string, nodeIdStrokeId: string) => void;
+  onEraserPreview?: (nodeId: string, strokeIds: string[]) => void;
+  onEraserPreviewEnd?: (nodeId: string) => void;
 }
 
 export function useCollaboration({
@@ -154,9 +154,9 @@ export function useCollaboration({
     });
 
     // Handle remote cursor stop
-    socket.on('cursor-stop', (data: { odeid: string }) => {
+    socket.on('cursor-stop', (data: { nodeId: string }) => {
       if (callbacksRef.current.onCursorStop) {
-        callbacksRef.current.onCursorStop(data.odeid);
+        callbacksRef.current.onCursorStop(data.nodeId);
       }
     });
 
@@ -164,8 +164,8 @@ export function useCollaboration({
     socket.on('stroke-progress', (data: StrokeProgressMessage) => {
       if (data.canvasId === canvasId && callbacksRef.current.onStrokeProgress) {
         callbacksRef.current.onStrokeProgress({
-          odeid: data.odeid,
-          odeidStrokeId: data.odeidStrokeId,
+          nodeId: data.nodeId,
+          nodeIdStrokeId: data.nodeIdStrokeId,
           tool: data.stroke.tool,
           color: data.stroke.color,
           size: data.stroke.size,
@@ -176,23 +176,23 @@ export function useCollaboration({
     });
 
     // Handle remote stroke progress end
-    socket.on('stroke-progress-end', (data: { odeid: string; odeidStrokeId: string }) => {
+    socket.on('stroke-progress-end', (data: { nodeId: string; nodeIdStrokeId: string }) => {
       if (callbacksRef.current.onStrokeProgressEnd) {
-        callbacksRef.current.onStrokeProgressEnd(data.odeid, data.odeidStrokeId);
+        callbacksRef.current.onStrokeProgressEnd(data.nodeId, data.nodeIdStrokeId);
       }
     });
 
     // Handle remote eraser preview (real-time streaming of strokes to be erased)
     socket.on('eraser-preview', (data: EraserPreviewMessage) => {
       if (data.canvasId === canvasId && callbacksRef.current.onEraserPreview) {
-        callbacksRef.current.onEraserPreview(data.odeid, data.strokeIds);
+        callbacksRef.current.onEraserPreview(data.nodeId, data.strokeIds);
       }
     });
 
     // Handle remote eraser preview end
-    socket.on('eraser-preview-end', (data: { odeid: string }) => {
+    socket.on('eraser-preview-end', (data: { nodeId: string }) => {
       if (callbacksRef.current.onEraserPreviewEnd) {
-        callbacksRef.current.onEraserPreviewEnd(data.odeid);
+        callbacksRef.current.onEraserPreviewEnd(data.nodeId);
       }
     });
 
@@ -289,7 +289,7 @@ export function useCollaboration({
 
   // Send stroke progress to server (throttled to ~50ms)
   const sendStrokeProgress = useCallback(
-    (odeidStrokeId: string, stroke: { tool: 'brush' | 'eraser'; color: string; size: number; points: { x: number; y: number }[] }) => {
+    (nodeIdStrokeId: string, stroke: { tool: 'brush' | 'eraser'; color: string; size: number; points: { x: number; y: number }[] }) => {
       const now = Date.now();
       // Throttle stroke progress updates to avoid flooding the server
       if (now - lastStrokeProgressRef.current < 50) {
@@ -300,7 +300,7 @@ export function useCollaboration({
       if (socketRef.current?.connected && canvasId) {
         socketRef.current.emit('stroke-progress', {
           canvasId,
-          odeidStrokeId,
+          nodeIdStrokeId,
           stroke,
         });
       }
@@ -310,11 +310,11 @@ export function useCollaboration({
 
   // Send stroke progress end to server
   const sendStrokeProgressEnd = useCallback(
-    (odeidStrokeId: string) => {
+    (nodeIdStrokeId: string) => {
       if (socketRef.current?.connected && canvasId) {
         socketRef.current.emit('stroke-progress-end', {
           canvasId,
-          odeidStrokeId,
+          nodeIdStrokeId,
         });
       }
     },
