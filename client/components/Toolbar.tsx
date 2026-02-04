@@ -33,6 +33,20 @@ export default function Toolbar({
     >
       <div style={{ display: 'flex', gap: '10px' }}>
         <button
+          onClick={() => onToolChange('select')}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: activeTool === 'select' ? '#3b82f6' : '#e5e7eb',
+            color: activeTool === 'select' ? 'white' : 'black',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontWeight: activeTool === 'select' ? 'bold' : 'normal',
+          }}
+        >
+          Select
+        </button>
+        <button
           onClick={() => onToolChange('brush')}
           style={{
             padding: '10px 20px',
@@ -102,7 +116,7 @@ export default function Toolbar({
       )}
 
       <div style={{ marginLeft: 'auto', fontSize: '14px', color: '#6b7280' }}>
-        <strong>Keyboard shortcuts:</strong> B - Brush | E - Eraser | C - Clear
+        <strong>Keyboard shortcuts:</strong> S - Select | B - Brush | E - Eraser | C - Clear
       </div>
     </div>
   );

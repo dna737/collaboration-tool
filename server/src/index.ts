@@ -55,6 +55,23 @@ function addObjectToCanvas(canvasId: string, object: any): any | null {
   return null;
 }
 
+function updateObjectInCanvas(canvasId: string, object: any): any | null {
+  const normalized = normalizeObject(object);
+  if (!normalized) {
+    return null;
+  }
+
+  const objects = getCanvasState(canvasId);
+  const index = objects.findIndex((o) => o.id === normalized.id);
+  if (index !== -1) {
+    objects[index] = normalized;
+    return normalized;
+  }
+
+  objects.push(normalized);
+  return normalized;
+}
+
 function removeObjectsFromCanvas(canvasId: string, objectIds: string[]): boolean {
   const objects = getCanvasState(canvasId);
   const initialLength = objects.length;
@@ -135,6 +152,24 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle object updated (new)
+  socket.on('object-updated', (data: { canvasId: string; object: any }) => {
+    const { canvasId, object } = data;
+
+    if (!canvasId) {
+      socket.emit('error', { message: 'Invalid canvas ID' });
+      return;
+    }
+
+    const updated = updateObjectInCanvas(canvasId, object);
+    if (!updated) {
+      socket.emit('error', { message: 'Invalid object data' });
+      return;
+    }
+
+    socket.to(canvasId).emit('object-updated', { canvasId, object: updated });
+  });
+
   // Handle stroke added (legacy)
   socket.on('stroke-added', (data: { canvasId: string; stroke: any }) => {
     const { canvasId, stroke } = data;
@@ -201,7 +236,7 @@ io.on('connection', (socket) => {
   });
 
   // Handle cursor/drawing updates
-  socket.on('cursor-update', (data: { canvasId: string; position: { x: number; y: number }; isDrawing: boolean; activeTool?: 'brush' | 'eraser' }) => {
+  socket.on('cursor-update', (data: { canvasId: string; position: { x: number; y: number }; isDrawing: boolean; activeTool?: 'brush' | 'eraser' | 'select' }) => {
     const { canvasId, position, isDrawing, activeTool } = data;
     
     if (!canvasId || !position) {

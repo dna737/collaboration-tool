@@ -41,7 +41,9 @@ export default function CanvasPage() {
 
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
-      if (e.key === 'b' || e.key === 'B') {
+      if (e.key === 's' || e.key === 'S') {
+        setActiveTool('select');
+      } else if (e.key === 'b' || e.key === 'B') {
         setActiveTool('brush');
       } else if (e.key === 'e' || e.key === 'E') {
         setActiveTool('eraser');

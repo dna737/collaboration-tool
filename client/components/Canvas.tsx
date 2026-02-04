@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Brush, Eraser } from 'lucide-react';
+import { Brush, Eraser, MousePointer2 } from 'lucide-react';
 import { useCanvas } from '@/hooks/useCanvas';
 import { Tool, UserPresence } from '@/types';
 
@@ -286,7 +286,13 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
         onMouseLeave={handleCanvasMouseLeave}
         style={{
           border: '2px solid #ddd',
-          cursor: isDisabled ? 'not-allowed' : (activeTool === 'brush' ? 'crosshair' : 'none'),
+          cursor: isDisabled
+            ? 'not-allowed'
+            : activeTool === 'brush'
+              ? 'crosshair'
+              : activeTool === 'eraser'
+                ? 'none'
+                : 'grab',
           backgroundColor: 'white',
           opacity: isDisabled ? 0.7 : 1,
         }}
@@ -386,6 +392,8 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
             >
               {cursor.activeTool === 'eraser' ? (
                 <Eraser size={16} color="#3b82f6" />
+              ) : cursor.activeTool === 'select' ? (
+                <MousePointer2 size={16} color="#3b82f6" />
               ) : (
                 <Brush size={16} color="#3b82f6" />
               )}

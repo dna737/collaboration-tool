@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { CanvasObject, StrokeObject, ImageObject, Point, Tool, CanvasId, UserPresence, InProgressStroke } from '@/types';
-import { renderAllObjects, getCanvasPoint, findObjectsToErase } from '@/lib/canvas-utils';
+import { renderAllObjects, getCanvasPoint, findObjectsToErase, findTopImageAtPoint } from '@/lib/canvas-utils';
 import { storage } from '@/lib/storage';
 import { useCollaboration } from '@/hooks/useCollaboration';
 
@@ -106,7 +106,6 @@ async function downscaleImageBlob(params: {
 
     return { blob: outBlob, width, height, mime: 'image/png' };
   } finally {
-    // @ts-expect-error - close exists on ImageBitmap in modern browsers
     if (typeof bitmap.close === 'function') bitmap.close();
   }
 }
@@ -128,6 +127,9 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const localActionHistoryRef = useRef<LocalAction[]>([]); // Stack of local actions for per-user undo
 
   const lastPointerPositionRef = useRef<Point | null>(null);
+  const dragImageRef = useRef<{ id: string; offset: Point } | null>(null);
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const lastObjectUpdateRef = useRef<number>(0);
 
   // Asset cache for rendering
   const [imageCache, setImageCache] = useState<Map<string, CanvasImageSource>>(new Map());
@@ -142,6 +144,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     isInitializing,
     sendObjectAdded,
     sendObjectRemoved,
+    sendObjectUpdated,
     sendCanvasCleared,
     sendCursorUpdate,
     sendCursorStop,
@@ -181,6 +184,9 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
         if (prev.find((o) => o.id === object.id)) return prev;
         return [...prev, object];
       });
+    },
+    onObjectUpdated: (object: CanvasObject) => {
+      setObjects((prev) => prev.map((o) => (o.id === object.id ? object : o)));
     },
     onObjectRemoved: (objectIds: string[]) => {
       setObjects((prev) => prev.filter((o) => !objectIds.includes(o.id)));
@@ -255,6 +261,35 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       setImageCache((prev) => new Map(prev).set(assetId, source));
     },
   });
+
+  const updateImagePosition = (imageId: string, x: number, y: number): ImageObject | null => {
+    const current = objectsRef.current;
+    let updated: ImageObject | null = null;
+    const next = current.map((obj) => {
+      if (obj.id === imageId && obj.type === 'image') {
+        updated = { ...obj, x, y };
+        return updated;
+      }
+      return obj;
+    });
+
+    if (updated) {
+      objectsRef.current = next;
+      setObjects(next);
+    }
+
+    return updated;
+  };
+
+  const maybeSendObjectUpdate = (object: CanvasObject, force = false) => {
+    if (!canvasId) return;
+    const now = Date.now();
+    if (!force && now - lastObjectUpdateRef.current < 50) {
+      return;
+    }
+    lastObjectUpdateRef.current = now;
+    sendObjectUpdated(object);
+  };
 
   useEffect(() => {
     // Only load from IndexedDB if user is connected (authorized to see the canvas)
@@ -517,6 +552,17 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     if (!canvas) return;
 
     const point = getCanvasPoint(canvas, e.clientX, e.clientY);
+    lastPointerPositionRef.current = point;
+
+    if (activeTool === 'select') {
+      const hit = findTopImageAtPoint(objectsRef.current, point);
+      if (!hit) return;
+      dragImageRef.current = { id: hit.id, offset: { x: point.x - hit.x, y: point.y - hit.y } };
+      setIsDrawing(true);
+      setIsDraggingImage(true);
+      return;
+    }
+
     setIsDrawing(true);
     const initialPoints = [point];
     setCurrentPoints(initialPoints);
@@ -540,6 +586,19 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     lastPointerPositionRef.current = point;
 
     if (!isDrawing) return;
+
+    if (activeTool === 'select') {
+      const drag = dragImageRef.current;
+      if (!drag) return;
+
+      const newX = point.x - drag.offset.x;
+      const newY = point.y - drag.offset.y;
+      const updated = updateImagePosition(drag.id, newX, newY);
+      if (updated) {
+        maybeSendObjectUpdate(updated);
+      }
+      return;
+    }
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -597,6 +656,24 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       setIsDrawing(false);
       setCurrentPoints([]);
       setObjectsToErasePreview(new Set()); // Clear preview
+      return;
+    }
+
+    if (activeTool === 'select') {
+      const drag = dragImageRef.current;
+      if (drag) {
+        const current = objectsRef.current.find((o) => o.id === drag.id);
+        if (current) {
+          maybeSendObjectUpdate(current, true);
+        }
+      }
+      dragImageRef.current = null;
+      setIsDraggingImage(false);
+      setIsDrawing(false);
+      currentPointsRef.current = [];
+      if (canvasId) {
+        sendCursorStop();
+      }
       return;
     }
     

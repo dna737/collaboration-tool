@@ -36,7 +36,7 @@ export type CanvasObject = StrokeObject | ImageObject;
 // Backwards-compatible alias (many files use Stroke today)
 export type Stroke = StrokeObject;
 
-export type Tool = 'brush' | 'eraser';
+export type Tool = 'brush' | 'eraser' | 'select';
 
 export interface CanvasSettings {
   activeTool: Tool;
@@ -60,6 +60,12 @@ export interface ObjectAddedMessage {
 export interface ObjectRemovedMessage {
   canvasId: string;
   objectIds: string[];
+  timestamp?: number;
+}
+
+export interface ObjectUpdatedMessage {
+  canvasId: string;
+  object: CanvasObject;
   timestamp?: number;
 }
 

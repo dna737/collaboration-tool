@@ -5,6 +5,7 @@ import {
   CanvasStateMessage,
   ObjectAddedMessage,
   ObjectRemovedMessage,
+  ObjectUpdatedMessage,
   UserPresence,
   CursorUpdateMessage,
   StrokeProgressMessage,
@@ -24,6 +25,7 @@ interface UseCollaborationProps {
   userName: string;
   onObjectAdded: (object: CanvasObject) => void;
   onObjectRemoved: (objectIds: string[]) => void;
+  onObjectUpdated?: (object: CanvasObject) => void;
   onCanvasCleared: () => void;
   onCanvasState: (objects: CanvasObject[]) => void;
   onCursorUpdate?: (user: UserPresence) => void;
@@ -42,6 +44,7 @@ export function useCollaboration({
   userName,
   onObjectAdded,
   onObjectRemoved,
+  onObjectUpdated,
   onCanvasCleared,
   onCanvasState,
   onCursorUpdate,
@@ -67,6 +70,7 @@ export function useCollaboration({
   const callbacksRef = useRef({
     onObjectAdded,
     onObjectRemoved,
+    onObjectUpdated,
     onCanvasCleared,
     onCanvasState,
     onCursorUpdate,
@@ -85,6 +89,7 @@ export function useCollaboration({
     callbacksRef.current = {
       onObjectAdded,
       onObjectRemoved,
+      onObjectUpdated,
       onCanvasCleared,
       onCanvasState,
       onCursorUpdate,
@@ -97,7 +102,7 @@ export function useCollaboration({
       onAssetChunk,
       onAssetComplete,
     };
-  }, [onObjectAdded, onObjectRemoved, onCanvasCleared, onCanvasState, onCursorUpdate, onCursorStop, onStrokeProgress, onStrokeProgressEnd, onEraserPreview, onEraserPreviewEnd, onAssetAvailable, onAssetChunk, onAssetComplete]);
+  }, [onObjectAdded, onObjectRemoved, onObjectUpdated, onCanvasCleared, onCanvasState, onCursorUpdate, onCursorStop, onStrokeProgress, onStrokeProgressEnd, onEraserPreview, onEraserPreviewEnd, onAssetAvailable, onAssetChunk, onAssetComplete]);
 
   useEffect(() => {
     if (!canvasId) {
@@ -163,6 +168,13 @@ export function useCollaboration({
     socket.on('object-removed', (data: ObjectRemovedMessage) => {
       if (data.canvasId === canvasId && Array.isArray(data.objectIds) && !isLocalActionRef.current) {
         callbacksRef.current.onObjectRemoved(data.objectIds);
+      }
+    });
+
+    // Handle remote object updated
+    socket.on('object-updated', (data: ObjectUpdatedMessage) => {
+      if (data.canvasId === canvasId && data.object && callbacksRef.current.onObjectUpdated) {
+        callbacksRef.current.onObjectUpdated(data.object);
       }
     });
 
@@ -293,6 +305,20 @@ export function useCollaboration({
     [canvasId]
   );
 
+  // Send object updated to server
+  const sendObjectUpdated = useCallback(
+    (object: CanvasObject) => {
+      if (socketRef.current && socketRef.current.connected && canvasId) {
+        socketRef.current.emit('object-updated', {
+          canvasId,
+          object,
+          timestamp: Date.now(),
+        } satisfies ObjectUpdatedMessage);
+      }
+    },
+    [canvasId]
+  );
+
   // Send canvas cleared to server
   const sendCanvasCleared = useCallback(() => {
     if (socketRef.current && socketRef.current.connected && canvasId) {
@@ -349,7 +375,7 @@ export function useCollaboration({
 
   // Send cursor update to server (throttled to ~50ms)
   const sendCursorUpdate = useCallback(
-    (position: { x: number; y: number }, isDrawing: boolean, activeTool?: 'brush' | 'eraser') => {
+    (position: { x: number; y: number }, isDrawing: boolean, activeTool?: 'brush' | 'eraser' | 'select') => {
       const now = Date.now();
       // Throttle cursor updates to avoid flooding the server
       if (now - lastCursorUpdateRef.current < 50) {
@@ -445,6 +471,7 @@ export function useCollaboration({
     isInitializing,
     sendObjectAdded,
     sendObjectRemoved,
+    sendObjectUpdated,
     sendCanvasCleared,
     sendCursorUpdate,
     sendCursorStop,

@@ -162,6 +162,22 @@ export function getCanvasPoint(
   };
 }
 
+export function findTopImageAtPoint(objects: CanvasObject[], point: Point): ImageObject | null {
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const obj = objects[i];
+    if (obj.type !== 'image') continue;
+    if (
+      point.x >= obj.x &&
+      point.x <= obj.x + obj.width &&
+      point.y >= obj.y &&
+      point.y <= obj.y + obj.height
+    ) {
+      return obj;
+    }
+  }
+  return null;
+}
+
 /**
  * Checks if two line segments intersect.
  */
