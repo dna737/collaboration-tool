@@ -1,5 +1,13 @@
 import { CanvasObject, StrokeObject, ImageObject, Point, InProgressStroke } from '@/types';
 
+/** Bounding box in canvas coordinates: x, y, width, height. */
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export function drawStroke(
   ctx: CanvasRenderingContext2D,
   stroke: StrokeObject,
@@ -179,6 +187,130 @@ export function findTopImageAtPoint(objects: CanvasObject[], point: Point): Imag
 }
 
 /**
+ * Returns the bounding box of a single canvas object in canvas coordinates.
+ * For images: x, y, width, height. For strokes: min/max of points expanded by half stroke size.
+ */
+export function getObjectBoundingBox(obj: CanvasObject): Rect {
+  if (obj.type === 'image') {
+    return { x: obj.x, y: obj.y, w: obj.width, h: obj.height };
+  }
+  // Stroke: bounding box of points, expanded by half line width
+  if (obj.points.length === 0) {
+    return { x: 0, y: 0, w: 0, h: 0 };
+  }
+  const half = obj.size / 2;
+  let minX = obj.points[0].x;
+  let minY = obj.points[0].y;
+  let maxX = obj.points[0].x;
+  let maxY = obj.points[0].y;
+  for (let i = 1; i < obj.points.length; i++) {
+    const p = obj.points[i];
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  return {
+    x: minX - half,
+    y: minY - half,
+    w: maxX - minX + obj.size,
+    h: maxY - minY + obj.size,
+  };
+}
+
+/**
+ * Returns the union bounding box of the given objects, or null if empty.
+ */
+export function getSelectionBoundingBox(objects: CanvasObject[]): Rect | null {
+  if (objects.length === 0) return null;
+  const first = getObjectBoundingBox(objects[0]);
+  let minX = first.x;
+  let minY = first.y;
+  let maxX = first.x + first.w;
+  let maxY = first.y + first.h;
+  for (let i = 1; i < objects.length; i++) {
+    const r = getObjectBoundingBox(objects[i]);
+    minX = Math.min(minX, r.x);
+    minY = Math.min(minY, r.y);
+    maxX = Math.max(maxX, r.x + r.w);
+    maxY = Math.max(maxY, r.y + r.h);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/**
+ * Returns true iff inner is fully contained in outer (edges inclusive).
+ */
+export function isRectContained(inner: Rect, outer: Rect): boolean {
+  return (
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.w <= outer.x + outer.w &&
+    inner.y + inner.h <= outer.y + outer.h
+  );
+}
+
+/**
+ * Returns objects whose entire bounding box is inside the given rect.
+ * rect should have positive w and h (use normalized marquee rect).
+ */
+export function getObjectsFullyInRect(objects: CanvasObject[], rect: Rect): CanvasObject[] {
+  return objects.filter((obj) => {
+    const box = getObjectBoundingBox(obj);
+    return isRectContained(box, rect);
+  });
+}
+
+/**
+ * Returns true if point p is inside rectangle r (edges inclusive).
+ */
+export function pointInRect(p: Point, r: Rect): boolean {
+  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+}
+
+/**
+ * Translates a stroke by (dx, dy). Returns a new stroke.
+ */
+export function translateStroke(stroke: StrokeObject, dx: number, dy: number): StrokeObject {
+  return {
+    ...stroke,
+    points: stroke.points.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+  };
+}
+
+/**
+ * Draws the selection box (dashed rectangle) around selected objects.
+ */
+export function drawSelectionBox(ctx: CanvasRenderingContext2D, box: Rect): void {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(59, 130, 246, 0.9)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(box.x, box.y, box.w, box.h);
+  ctx.restore();
+}
+
+/**
+ * Draws the marquee rectangle while the user is dragging to select.
+ */
+export function drawMarqueeRect(
+  ctx: CanvasRenderingContext2D,
+  start: Point,
+  end: Point
+): void {
+  const x = Math.min(start.x, end.x);
+  const y = Math.min(start.y, end.y);
+  const w = Math.abs(end.x - start.x);
+  const h = Math.abs(end.y - start.y);
+  ctx.save();
+  ctx.strokeStyle = 'rgba(59, 130, 246, 0.7)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 4]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
+}
+
+/**
  * Checks if two line segments intersect.
  */
 function doLineSegmentsIntersect(
@@ -193,10 +325,6 @@ function doLineSegmentsIntersect(
   const d4 = (p2.x - p1.x) * (p4.y - p1.y) - (p2.y - p1.y) * (p4.x - p1.x);
 
   return d1 * d2 < 0 && d3 * d4 < 0;
-}
-
-function pointInRect(p: Point, r: { x: number; y: number; w: number; h: number }): boolean {
-  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 }
 
 function segmentIntersectsRect(p1: Point, p2: Point, r: { x: number; y: number; w: number; h: number }): boolean {

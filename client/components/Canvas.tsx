@@ -45,6 +45,7 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
     isConnected,
     error,
     isInitializing,
+    isDraggingSelection,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,
@@ -219,6 +220,17 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
   // Check if canvas is disabled (not connected or has error)
   const isDisabled = !isConnected || !!error;
 
+  let canvasCursor: string = 'grab';
+  if (isDisabled) {
+    canvasCursor = 'not-allowed';
+  } else if (activeTool === 'brush') {
+    canvasCursor = 'crosshair';
+  } else if (activeTool === 'eraser') {
+    canvasCursor = 'none';
+  } else if (activeTool === 'select') {
+    canvasCursor = isDraggingSelection ? 'grabbing' : 'grab';
+  }
+
   return (
     <div className="canvas-container" ref={containerRef} style={{ position: 'relative', display: 'inline-block' }}>
       {/* Connection status indicator */}
@@ -286,13 +298,7 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
         onMouseLeave={handleCanvasMouseLeave}
         style={{
           border: '2px solid #ddd',
-          cursor: isDisabled
-            ? 'not-allowed'
-            : activeTool === 'brush'
-              ? 'crosshair'
-              : activeTool === 'eraser'
-                ? 'none'
-                : 'grab',
+          cursor: canvasCursor,
           backgroundColor: 'white',
           opacity: isDisabled ? 0.7 : 1,
         }}

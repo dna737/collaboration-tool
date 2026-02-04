@@ -1,7 +1,17 @@
 import { useRef, useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { CanvasObject, StrokeObject, ImageObject, Point, Tool, CanvasId, UserPresence, InProgressStroke } from '@/types';
-import { renderAllObjects, getCanvasPoint, findObjectsToErase, findTopImageAtPoint } from '@/lib/canvas-utils';
+import {
+  renderAllObjects,
+  getCanvasPoint,
+  findObjectsToErase,
+  getSelectionBoundingBox,
+  getObjectsFullyInRect,
+  pointInRect,
+  drawSelectionBox,
+  drawMarqueeRect,
+  translateStroke,
+} from '@/lib/canvas-utils';
 import { storage } from '@/lib/storage';
 import { useCollaboration } from '@/hooks/useCollaboration';
 
@@ -127,9 +137,13 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const localActionHistoryRef = useRef<LocalAction[]>([]); // Stack of local actions for per-user undo
 
   const lastPointerPositionRef = useRef<Point | null>(null);
-  const dragImageRef = useRef<{ id: string; offset: Point } | null>(null);
-  const [isDraggingImage, setIsDraggingImage] = useState(false);
   const lastObjectUpdateRef = useRef<number>(0);
+
+  // Selection (Excalidraw-style): marquee select + drag from selection box
+  const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
+  const [selectionRect, setSelectionRect] = useState<{ start: Point; end: Point } | null>(null);
+  const [isDraggingSelection, setIsDraggingSelection] = useState(false);
+  const dragSelectionRef = useRef<{ lastPoint: Point } | null>(null);
 
   // Asset cache for rendering
   const [imageCache, setImageCache] = useState<Map<string, CanvasImageSource>>(new Map());
@@ -334,7 +348,18 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     });
 
     renderAllObjects(ctx, objects, canvas.width, canvas.height, combinedEraserPreview, inProgressStrokes, imageCache);
-  }, [objects, objectsToErasePreview, remoteEraserPreviews, inProgressStrokes, imageCache]);
+
+    if (selectedObjectIds.length > 0) {
+      const selectedObjects = objects.filter((o) => selectedObjectIds.includes(o.id));
+      const box = getSelectionBoundingBox(selectedObjects);
+      if (box) {
+        drawSelectionBox(ctx, box);
+      }
+    }
+    if (selectionRect) {
+      drawMarqueeRect(ctx, selectionRect.start, selectionRect.end);
+    }
+  }, [objects, objectsToErasePreview, remoteEraserPreviews, inProgressStrokes, imageCache, selectedObjectIds, selectionRect]);
 
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -555,11 +580,18 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     lastPointerPositionRef.current = point;
 
     if (activeTool === 'select') {
-      const hit = findTopImageAtPoint(objectsRef.current, point);
-      if (!hit) return;
-      dragImageRef.current = { id: hit.id, offset: { x: point.x - hit.x, y: point.y - hit.y } };
+      const selectedObjects = objectsRef.current.filter((o) => selectedObjectIds.includes(o.id));
+      const selectionBox = getSelectionBoundingBox(selectedObjects);
+      const insideBox = selectionBox && selectedObjectIds.length > 0 && pointInRect(point, selectionBox);
+      if (insideBox) {
+        dragSelectionRef.current = { lastPoint: point };
+        setIsDraggingSelection(true);
+        setIsDrawing(true);
+        return;
+      }
+      setSelectedObjectIds([]);
+      setSelectionRect({ start: point, end: point });
       setIsDrawing(true);
-      setIsDraggingImage(true);
       return;
     }
 
@@ -588,14 +620,32 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     if (!isDrawing) return;
 
     if (activeTool === 'select') {
-      const drag = dragImageRef.current;
-      if (!drag) return;
-
-      const newX = point.x - drag.offset.x;
-      const newY = point.y - drag.offset.y;
-      const updated = updateImagePosition(drag.id, newX, newY);
-      if (updated) {
-        maybeSendObjectUpdate(updated);
+      const drag = dragSelectionRef.current;
+      if (drag) {
+        const dx = point.x - drag.lastPoint.x;
+        const dy = point.y - drag.lastPoint.y;
+        if (dx !== 0 || dy !== 0) {
+          const current = objectsRef.current;
+          const selectedSet = new Set(selectedObjectIds);
+          const next = current.map((obj) => {
+            if (!selectedSet.has(obj.id)) return obj;
+            if (obj.type === 'image') {
+              return { ...obj, x: obj.x + dx, y: obj.y + dy };
+            }
+            return translateStroke(obj, dx, dy);
+          });
+          objectsRef.current = next;
+          setObjects(next);
+          next.forEach((o) => {
+            if (selectedSet.has(o.id)) maybeSendObjectUpdate(o);
+          });
+        }
+        drag.lastPoint = point;
+        return;
+      }
+      if (selectionRect) {
+        setSelectionRect((prev) => (prev ? { ...prev, end: point } : null));
+        return;
       }
       return;
     }
@@ -660,20 +710,37 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     }
 
     if (activeTool === 'select') {
-      const drag = dragImageRef.current;
+      const drag = dragSelectionRef.current;
       if (drag) {
-        const current = objectsRef.current.find((o) => o.id === drag.id);
-        if (current) {
-          maybeSendObjectUpdate(current, true);
+        const current = objectsRef.current;
+        const selectedSet = new Set(selectedObjectIds);
+        current.forEach((obj) => {
+          if (selectedSet.has(obj.id)) maybeSendObjectUpdate(obj, true);
+        });
+        dragSelectionRef.current = null;
+        setIsDraggingSelection(false);
+        setIsDrawing(false);
+        if (canvasId) sendCursorStop();
+        return;
+      }
+      if (selectionRect) {
+        const x = Math.min(selectionRect.start.x, selectionRect.end.x);
+        const y = Math.min(selectionRect.start.y, selectionRect.end.y);
+        const w = Math.abs(selectionRect.end.x - selectionRect.start.x);
+        const h = Math.abs(selectionRect.end.y - selectionRect.start.y);
+        if (w < 3 && h < 3) {
+          setSelectedObjectIds([]);
+        } else {
+          const rect = { x, y, w, h };
+          const inRect = getObjectsFullyInRect(objectsRef.current, rect);
+          setSelectedObjectIds(inRect.map((o) => o.id));
         }
+        setSelectionRect(null);
+        setIsDrawing(false);
+        if (canvasId) sendCursorStop();
+        return;
       }
-      dragImageRef.current = null;
-      setIsDraggingImage(false);
       setIsDrawing(false);
-      currentPointsRef.current = [];
-      if (canvasId) {
-        sendCursorStop();
-      }
       return;
     }
     
@@ -790,6 +857,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     isConnected,
     error,
     isInitializing,
+    isDraggingSelection,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,
