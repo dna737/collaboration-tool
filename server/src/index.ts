@@ -17,7 +17,7 @@ const io = new Server(httpServer, {
 // Maximum number of users per session
 const MAX_USERS_PER_SESSION = 10;
 
-// In-memory storage: Map<canvasId, Stroke[]>
+// In-memory storage: Map<canvasId, CanvasObject[]>
 const canvasStates = new Map<string, any[]>();
 
 // Track users per canvas room: Map<canvasId, Map<socketId, UserInfo>>
@@ -29,6 +29,44 @@ function getCanvasState(canvasId: string): any[] {
     canvasStates.set(canvasId, []);
   }
   return canvasStates.get(canvasId)!;
+}
+
+function normalizeObject(object: any): any | null {
+  if (!object || !object.id) {
+    return null;
+  }
+  if (!object.type) {
+    return { ...object, type: 'stroke' };
+  }
+  return object;
+}
+
+function addObjectToCanvas(canvasId: string, object: any): any | null {
+  const normalized = normalizeObject(object);
+  if (!normalized) {
+    return null;
+  }
+
+  const objects = getCanvasState(canvasId);
+  if (!objects.find((o) => o.id === normalized.id)) {
+    objects.push(normalized);
+    return normalized;
+  }
+  return null;
+}
+
+function removeObjectsFromCanvas(canvasId: string, objectIds: string[]): boolean {
+  const objects = getCanvasState(canvasId);
+  const initialLength = objects.length;
+
+  objectIds.forEach((id) => {
+    const index = objects.findIndex((o) => o.id === id);
+    if (index !== -1) {
+      objects.splice(index, 1);
+    }
+  });
+
+  return objects.length !== initialLength;
 }
 
 io.on('connection', (socket) => {
@@ -71,30 +109,69 @@ io.on('connection', (socket) => {
     console.log(`Client ${socket.id} (${userName}) joined canvas ${canvasId} (${newRoomSize}/${MAX_USERS_PER_SESSION})`);
 
     // Send current canvas state to the new client
-    const strokes = getCanvasState(canvasId);
-    socket.emit('canvas-state', { canvasId, strokes });
+    const objects = getCanvasState(canvasId).map(normalizeObject).filter(Boolean);
+    socket.emit('canvas-state', { canvasId, objects, strokes: objects });
   });
 
-  // Handle stroke added
+  // Handle object added (new)
+  socket.on('object-added', (data: { canvasId: string; object: any }) => {
+    const { canvasId, object } = data;
+
+    if (!canvasId) {
+      socket.emit('error', { message: 'Invalid canvas ID' });
+      return;
+    }
+
+    const added = addObjectToCanvas(canvasId, object);
+    if (!added) {
+      socket.emit('error', { message: 'Invalid object data' });
+      return;
+    }
+
+    // Broadcast to all other clients in the room (excluding sender)
+    socket.to(canvasId).emit('object-added', { canvasId, object: added });
+    if (added.type === 'stroke') {
+      socket.to(canvasId).emit('stroke-added', { canvasId, stroke: added });
+    }
+  });
+
+  // Handle stroke added (legacy)
   socket.on('stroke-added', (data: { canvasId: string; stroke: any }) => {
     const { canvasId, stroke } = data;
 
-    if (!canvasId || !stroke || !stroke.id) {
+    if (!canvasId) {
+      socket.emit('error', { message: 'Invalid canvas ID' });
+      return;
+    }
+
+    const added = addObjectToCanvas(canvasId, stroke);
+    if (!added) {
       socket.emit('error', { message: 'Invalid stroke data' });
       return;
     }
 
-    const strokes = getCanvasState(canvasId);
-    
-    // Check if stroke already exists (prevent duplicates)
-    if (!strokes.find((s) => s.id === stroke.id)) {
-      strokes.push(stroke);
-      // Broadcast to all other clients in the room (excluding sender)
-      socket.to(canvasId).emit('stroke-added', { canvasId, stroke });
+    // Broadcast to all other clients in the room (excluding sender)
+    socket.to(canvasId).emit('stroke-added', { canvasId, stroke: added });
+    socket.to(canvasId).emit('object-added', { canvasId, object: added });
+  });
+
+  // Handle object removed (new)
+  socket.on('object-removed', (data: { canvasId: string; objectIds: string[] }) => {
+    const { canvasId, objectIds } = data;
+
+    if (!canvasId || !Array.isArray(objectIds)) {
+      socket.emit('error', { message: 'Invalid object removal data' });
+      return;
+    }
+
+    const removed = removeObjectsFromCanvas(canvasId, objectIds);
+    if (removed) {
+      socket.to(canvasId).emit('object-removed', { canvasId, objectIds });
+      socket.to(canvasId).emit('stroke-removed', { canvasId, strokeIds: objectIds });
     }
   });
 
-  // Handle stroke removed (eraser)
+  // Handle stroke removed (legacy)
   socket.on('stroke-removed', (data: { canvasId: string; strokeIds: string[] }) => {
     const { canvasId, strokeIds } = data;
 
@@ -103,20 +180,10 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const strokes = getCanvasState(canvasId);
-    const initialLength = strokes.length;
-    
-    // Remove strokes by ID
-    strokeIds.forEach((id) => {
-      const index = strokes.findIndex((s) => s.id === id);
-      if (index !== -1) {
-        strokes.splice(index, 1);
-      }
-    });
-
-    // Only broadcast if something was actually removed
-    if (strokes.length !== initialLength) {
+    const removed = removeObjectsFromCanvas(canvasId, strokeIds);
+    if (removed) {
       socket.to(canvasId).emit('stroke-removed', { canvasId, strokeIds });
+      socket.to(canvasId).emit('object-removed', { canvasId, objectIds: strokeIds });
     }
   });
 
@@ -204,11 +271,12 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle eraser preview (real-time streaming of strokes that will be erased)
-  socket.on('eraser-preview', (data: { canvasId: string; strokeIds: string[] }) => {
-    const { canvasId, strokeIds } = data;
+  // Handle eraser preview (real-time streaming of objects that will be erased)
+  socket.on('eraser-preview', (data: { canvasId: string; strokeIds?: string[]; objectIds?: string[] }) => {
+    const { canvasId } = data;
+    const objectIds = data.objectIds ?? data.strokeIds;
     
-    if (!canvasId || !Array.isArray(strokeIds)) {
+    if (!canvasId || !Array.isArray(objectIds)) {
       return; // Silently ignore invalid eraser preview updates
     }
 
@@ -216,7 +284,8 @@ io.on('connection', (socket) => {
     socket.to(canvasId).emit('eraser-preview', {
       canvasId,
       nodeId: socket.id,
-      strokeIds,
+      objectIds,
+      strokeIds: objectIds,
       timestamp: Date.now(),
     });
   });

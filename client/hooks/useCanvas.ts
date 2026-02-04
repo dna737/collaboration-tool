@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Stroke, Point, Tool, CanvasId, UserPresence, InProgressStroke } from '@/types';
-import { renderAllStrokes, getCanvasPoint, findObjectsToErase } from '@/lib/canvas-utils';
+import { CanvasObject, StrokeObject, ImageObject, Point, Tool, CanvasId, UserPresence, InProgressStroke } from '@/types';
+import { renderAllObjects, getCanvasPoint, findObjectsToErase } from '@/lib/canvas-utils';
 import { storage } from '@/lib/storage';
 import { useCollaboration } from '@/hooks/useCollaboration';
 
@@ -16,34 +16,132 @@ interface UseCanvasProps {
 }
 
 type LocalAction =
-  | { type: 'add'; stroke: Stroke }
-  | { type: 'remove'; strokes: Stroke[] };
+  | { type: 'add'; object: CanvasObject }
+  | { type: 'remove'; objects: CanvasObject[] };
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function decodeImageBytes(mime: string, bytes: ArrayBuffer): Promise<CanvasImageSource> {
+  const blob = new Blob([bytes], { type: mime });
+  if (typeof createImageBitmap !== 'undefined') {
+    return await createImageBitmap(blob);
+  }
+
+  // Fallback for environments without createImageBitmap
+  return await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to decode image'));
+    };
+    img.src = url;
+  });
+}
+
+function concatArrayBuffers(chunks: ArrayBuffer[]): ArrayBuffer {
+  const total = chunks.reduce((sum, c) => sum + c.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(new Uint8Array(chunk), offset);
+    offset += chunk.byteLength;
+  }
+  return out.buffer;
+};
+
+async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  return await blob.arrayBuffer();
+}
+
+async function downscaleImageBlob(params: {
+  blob: Blob;
+  maxWidth: number;
+  maxHeight: number;
+  maxPixels: number;
+}): Promise<{ blob: Blob; width: number; height: number; mime: string }> {
+  // Decode
+  const bitmap = await createImageBitmap(params.blob);
+  try {
+    const origW = bitmap.width;
+    const origH = bitmap.height;
+
+    const scaleToFit = Math.min(params.maxWidth / origW, params.maxHeight / origH, 1);
+    const scaleToPixels = Math.min(1, Math.sqrt(params.maxPixels / (origW * origH)));
+    const scale = Math.min(scaleToFit, scaleToPixels);
+
+    const width = Math.max(1, Math.round(origW * scale));
+    const height = Math.max(1, Math.round(origH * scale));
+
+    if (scale >= 1) {
+      return { blob: params.blob, width: origW, height: origH, mime: params.blob.type || 'image/png' };
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return { blob: params.blob, width: origW, height: origH, mime: params.blob.type || 'image/png' };
+    }
+
+    ctx.drawImage(bitmap, 0, 0, width, height);
+
+    const outBlob: Blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (b) => {
+          if (b) resolve(b);
+          else reject(new Error('Failed to downscale image'));
+        },
+        'image/png',
+        0.92
+      );
+    });
+
+    return { blob: outBlob, width, height, mime: 'image/png' };
+  } finally {
+    // @ts-expect-error - close exists on ImageBitmap in modern browsers
+    if (typeof bitmap.close === 'function') bitmap.close();
+  }
+}
 
 export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColor, onCursorUpdate, onCursorStop }: UseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [strokes, setStrokes] = useState<Stroke[]>([]);
+  const [objects, setObjects] = useState<CanvasObject[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
   const currentPointsRef = useRef<Point[]>([]); // Ref to track latest points for eraser
   const currentStrokeIdRef = useRef<string | null>(null); // Track current stroke ID for streaming
   const [inProgressStrokes, setInProgressStrokes] = useState<Map<string, InProgressStroke>>(new Map());
   const [objectsToErasePreview, setObjectsToErasePreview] = useState<Set<string>>(new Set());
-  const [remoteEraserPreviews, setRemoteEraserPreviews] = useState<Map<string, Set<string>>>(new Map()); // nodeId -> strokeIds
+  const [remoteEraserPreviews, setRemoteEraserPreviews] = useState<Map<string, Set<string>>>(new Map()); // nodeId -> objectIds
   const objectsToEraseRef = useRef<string[]>([]); // Store IDs to erase for use in mouseUp
-  const historyRef = useRef<Stroke[][]>([]); // History stack for undo
-  const historyIndexRef = useRef(0); // Current position in history
   const isUndoingRef = useRef(false); // Flag to prevent adding to history during undo
   const hasLoadedFromStorageRef = useRef(false); // Track if initial load from IndexedDB has happened
-  const strokesRef = useRef<Stroke[]>([]); // Ref to track latest strokes for undo sync
+  const objectsRef = useRef<CanvasObject[]>([]); // Ref to track latest objects for undo sync
   const localActionHistoryRef = useRef<LocalAction[]>([]); // Stack of local actions for per-user undo
+
+  const lastPointerPositionRef = useRef<Point | null>(null);
+
+  // Asset cache for rendering
+  const [imageCache, setImageCache] = useState<Map<string, CanvasImageSource>>(new Map());
+  const requestedAssetsRef = useRef<Set<string>>(new Set());
+  const incomingAssetChunksRef = useRef<Map<string, Map<number, ArrayBuffer>>>(new Map());
+  const assetUploadQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   // Collaboration hook
   const {
     isConnected,
     error,
     isInitializing,
-    sendStrokeAdded,
-    sendStrokeRemoved,
+    sendObjectAdded,
+    sendObjectRemoved,
     sendCanvasCleared,
     sendCursorUpdate,
     sendCursorStop,
@@ -51,86 +149,110 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     sendStrokeProgressEnd,
     sendEraserPreview,
     sendEraserPreviewEnd,
+    sendAssetUploadStart,
+    sendAssetUploadChunk,
+    sendAssetUploadComplete,
+    sendAssetRequest,
   } = useCollaboration({
     canvasId: canvasId || '',
     userName,
     onCursorUpdate,
     onCursorStop,
-    onStrokeAdded: (stroke: Stroke) => {
-      // Remove the in-progress stroke from this user since it's now committed
-      setInProgressStrokes((prev) => {
-        const newMap = new Map(prev);
-        // Find and remove the in-progress stroke from this sender
-        // We iterate to find by matching - the stroke-added comes without nodeId
-        // but we can remove any in-progress that matches the stroke ID pattern
-        prev.forEach((inProgress, nodeId) => {
-          // Remove if the points match (the stroke is now committed)
-          if (inProgress.points.length > 0 && stroke.points.length > 0) {
-            const firstPointMatch = 
-              inProgress.points[0].x === stroke.points[0].x && 
-              inProgress.points[0].y === stroke.points[0].y;
-            if (firstPointMatch) {
-              newMap.delete(nodeId);
+    onObjectAdded: (object: CanvasObject) => {
+      if (object.type === 'stroke') {
+        // Remove an in-progress stroke from this user since it's now committed
+        setInProgressStrokes((prev) => {
+          const newMap = new Map(prev);
+          prev.forEach((inProgress, nodeId) => {
+            if (inProgress.points.length > 0 && object.points.length > 0) {
+              const firstPointMatch =
+                inProgress.points[0].x === object.points[0].x &&
+                inProgress.points[0].y === object.points[0].y;
+              if (firstPointMatch) {
+                newMap.delete(nodeId);
+              }
             }
-          }
+          });
+          return newMap;
         });
-        return newMap;
-      });
-      
-      setStrokes((prev) => {
-        // Check if stroke already exists (prevent duplicates)
-        if (prev.find((s) => s.id === stroke.id)) {
-          return prev;
-        }
-        return [...prev, stroke];
+      }
+
+      setObjects((prev) => {
+        if (prev.find((o) => o.id === object.id)) return prev;
+        return [...prev, object];
       });
     },
-    onStrokeRemoved: (strokeIds: string[]) => {
-      setStrokes((prev) => prev.filter((s) => !strokeIds.includes(s.id)));
+    onObjectRemoved: (objectIds: string[]) => {
+      setObjects((prev) => prev.filter((o) => !objectIds.includes(o.id)));
     },
     onCanvasCleared: () => {
-      setStrokes([]);
+      setObjects([]);
+      setImageCache(new Map());
       // Fire and forget - errors are logged in the storage module
-      storage.clearStrokes(canvasId);
+      storage.clearCanvas(canvasId);
     },
-    onCanvasState: (initialStrokes: Stroke[]) => {
+    onCanvasState: (initialObjects: CanvasObject[]) => {
       hasLoadedFromStorageRef.current = true; // Server provided state, skip IndexedDB load
-      setStrokes(initialStrokes);
-      // Initialize history with the loaded strokes
-      historyRef.current = [JSON.parse(JSON.stringify(initialStrokes))];
-      historyIndexRef.current = 0;
+      setObjects(initialObjects);
     },
     onStrokeProgress: (progressData: InProgressStroke) => {
-      // Update in-progress strokes from remote users
       setInProgressStrokes((prev) => {
         const newMap = new Map(prev);
         newMap.set(progressData.nodeId, progressData);
         return newMap;
       });
     },
-    onStrokeProgressEnd: (nodeId: string, nodeIdStrokeId: string) => {
-      // Remove in-progress stroke when user stops drawing
+    onStrokeProgressEnd: (nodeId: string, _nodeIdStrokeId: string) => {
       setInProgressStrokes((prev) => {
         const newMap = new Map(prev);
         newMap.delete(nodeId);
         return newMap;
       });
     },
-    onEraserPreview: (nodeId: string, strokeIds: string[]) => {
-      // Update remote eraser previews
+    onEraserPreview: (nodeId: string, objectIds: string[]) => {
       setRemoteEraserPreviews((prev) => {
         const newMap = new Map(prev);
-        newMap.set(nodeId, new Set(strokeIds));
+        newMap.set(nodeId, new Set(objectIds));
         return newMap;
       });
     },
     onEraserPreviewEnd: (nodeId: string) => {
-      // Clear remote eraser preview when user stops erasing
       setRemoteEraserPreviews((prev) => {
         const newMap = new Map(prev);
         newMap.delete(nodeId);
         return newMap;
       });
+    },
+    onAssetAvailable: (assetId: string) => {
+      // If we have a placeholder image object and are missing the asset, request it.
+      const needed = objectsRef.current.some((o) => o.type === 'image' && o.assetId === assetId);
+      const cached = imageCache.has(assetId);
+      if (needed && !cached && canvasId) {
+        sendAssetRequest({ canvasId, assetId });
+      }
+    },
+    onAssetChunk: (assetId: string, seq: number, bytes: ArrayBuffer) => {
+      const current = incomingAssetChunksRef.current.get(assetId) ?? new Map<number, ArrayBuffer>();
+      current.set(seq, bytes);
+      incomingAssetChunksRef.current.set(assetId, current);
+    },
+    onAssetComplete: async (assetId: string, _totalBytes: number) => {
+      const chunksMap = incomingAssetChunksRef.current.get(assetId);
+      if (!chunksMap) return;
+
+      const ordered = Array.from(chunksMap.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([, buf]) => buf);
+
+      incomingAssetChunksRef.current.delete(assetId);
+      const bytes = concatArrayBuffers(ordered);
+
+      const imageObj = objectsRef.current.find((o) => o.type === 'image' && o.assetId === assetId) as ImageObject | undefined;
+      if (!imageObj) return;
+
+      await storage.saveAsset({ canvasId, assetId, mime: imageObj.mime, bytes });
+      const source = await decodeImageBytes(imageObj.mime, bytes);
+      setImageCache((prev) => new Map(prev).set(assetId, source));
     },
   });
 
@@ -145,19 +267,14 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     // Load from IndexedDB as fallback/cache
     const loadFromStorage = async () => {
       try {
-        const loadedStrokes = await storage.loadStrokes(canvasId);
-        if (loadedStrokes.length > 0) {
-          // Use functional update to check current state (avoids stale closure)
-          setStrokes((currentStrokes) => {
-            // Only use IndexedDB data if current strokes are empty
-            if (currentStrokes.length === 0) {
+        const loadedObjects = await storage.loadObjects(canvasId);
+        if (loadedObjects.length > 0) {
+          setObjects((currentObjects) => {
+            if (currentObjects.length === 0) {
               hasLoadedFromStorageRef.current = true;
-              // Initialize history with the loaded strokes
-              historyRef.current = [JSON.parse(JSON.stringify(loadedStrokes))];
-              historyIndexRef.current = 0;
-              return loadedStrokes;
+              return loadedObjects;
             }
-            return currentStrokes;
+            return currentObjects;
           });
         }
       } catch (error) {
@@ -177,48 +294,176 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
 
     // Combine local and remote eraser previews
     const combinedEraserPreview = new Set(objectsToErasePreview);
-    remoteEraserPreviews.forEach((strokeIds) => {
-      strokeIds.forEach((id) => combinedEraserPreview.add(id));
+    remoteEraserPreviews.forEach((objectIds) => {
+      objectIds.forEach((id) => combinedEraserPreview.add(id));
     });
 
-    renderAllStrokes(ctx, strokes, canvas.width, canvas.height, combinedEraserPreview, inProgressStrokes);
-  }, [strokes, objectsToErasePreview, remoteEraserPreviews, inProgressStrokes]);
+    renderAllObjects(ctx, objects, canvas.width, canvas.height, combinedEraserPreview, inProgressStrokes, imageCache);
+  }, [objects, objectsToErasePreview, remoteEraserPreviews, inProgressStrokes, imageCache]);
 
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
-        await storage.saveStrokes(strokes, canvasId);
+        await storage.saveObjects(objects, canvasId);
       } catch (error) {
         console.error('Failed to save strokes to storage:', error);
       }
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [strokes, canvasId]);
+  }, [objects, canvasId]);
 
-  // Keep strokesRef in sync with strokes for undo sync
+  // Keep objectsRef in sync with objects for undo + asset lookup
   useEffect(() => {
-    strokesRef.current = strokes;
-  }, [strokes]);
+    objectsRef.current = objects;
+  }, [objects]);
 
-  // Add current state to history when strokes change (but not during undo)
+  // Ensure image assets are available locally (load from IndexedDB, otherwise request from server)
   useEffect(() => {
-    if (!isUndoingRef.current && historyRef.current.length > 0) {
-      // When making a new change, discard any "future" states we had undone
-      historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1);
+    let cancelled = false;
 
-      // Add current state to history (deep copy)
-      historyRef.current.push(JSON.parse(JSON.stringify(strokes)));
-      historyIndexRef.current = historyRef.current.length - 1;
+    const ensure = async () => {
+      for (const obj of objects) {
+        if (obj.type !== 'image') continue;
+        if (imageCache.has(obj.assetId)) continue;
 
-      // Limit history size to prevent memory issues (keep last 50 states)
-      if (historyRef.current.length > 50) {
-        historyRef.current.shift();
-        historyIndexRef.current--;
+        const localAsset = await storage.loadAsset({ canvasId, assetId: obj.assetId });
+        if (cancelled) return;
+
+        if (localAsset) {
+          const source = await decodeImageBytes(localAsset.mime, localAsset.bytes);
+          if (cancelled) return;
+          setImageCache((prev) => new Map(prev).set(obj.assetId, source));
+          continue;
+        }
+
+        if (isConnected && canvasId && !requestedAssetsRef.current.has(obj.assetId)) {
+          requestedAssetsRef.current.add(obj.assetId);
+          sendAssetRequest({ canvasId, assetId: obj.assetId });
+        }
       }
-    }
-    isUndoingRef.current = false; // Reset flag after effect
-  }, [strokes]);
+    };
+
+    ensure();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [objects, imageCache, canvasId, isConnected, sendAssetRequest]);
+
+  // Paste handler (Ctrl/Cmd+V): image -> ImageObject + asset upload
+  useEffect(() => {
+    if (!isConnected || error) return;
+
+    const onPaste = async (e: ClipboardEvent) => {
+      try {
+        if (!canvasId) return;
+        if (!e.clipboardData) return;
+
+        // If user is typing in an input, don't steal paste.
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || (active as HTMLElement).isContentEditable)) {
+          return;
+        }
+
+        const items = Array.from(e.clipboardData.items);
+        const imageItem = items.find((it) => it.type.startsWith('image/'));
+        if (!imageItem) return;
+
+        const file = imageItem.getAsFile();
+        if (!file) return;
+
+        e.preventDefault();
+
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const maxWidth = canvas.width;
+        const maxHeight = canvas.height;
+
+        // Downscale before storing/syncing.
+        const scaled = await downscaleImageBlob({
+          blob: file,
+          maxWidth,
+          maxHeight,
+          maxPixels: 2_000_000, // ~2MP guardrail
+        });
+
+        const bytes = await blobToArrayBuffer(scaled.blob);
+        // Hard cap (after downscale)
+        if (bytes.byteLength > 8 * 1024 * 1024) {
+          console.warn('Pasted image too large after downscale; ignoring');
+          return;
+        }
+
+        const assetId = uuidv4();
+        const id = assetId;
+
+        const center = lastPointerPositionRef.current ?? { x: canvas.width / 2, y: canvas.height / 2 };
+        const x = Math.round(center.x - scaled.width / 2);
+        const y = Math.round(center.y - scaled.height / 2);
+
+        const imageObject: ImageObject = {
+          id,
+          type: 'image',
+          assetId,
+          mime: scaled.mime,
+          x,
+          y,
+          width: scaled.width,
+          height: scaled.height,
+          createdAt: Date.now(),
+        };
+
+        // Persist asset immediately (optimistic offline resilience)
+        await storage.saveAsset({ canvasId, assetId, mime: scaled.mime, bytes });
+
+        // Cache for immediate rendering
+        const source = await decodeImageBytes(scaled.mime, bytes);
+        setImageCache((prev) => new Map(prev).set(assetId, source));
+
+        // Update local state
+        localActionHistoryRef.current.push({ type: 'add', object: imageObject });
+        setObjects((prev) => [...prev, imageObject]);
+
+        // Sync metadata quickly
+        sendObjectAdded(imageObject);
+
+        // Upload asset in background (throttled via a single-flight queue)
+        assetUploadQueueRef.current = assetUploadQueueRef.current
+          .then(async () => {
+            const chunkSize = 64 * 1024;
+            sendAssetUploadStart({
+              canvasId,
+              assetId,
+              mime: scaled.mime,
+              totalBytes: bytes.byteLength,
+              chunkSize,
+              timestamp: Date.now(),
+            });
+
+            const view = new Uint8Array(bytes);
+            let seq = 0;
+            for (let offset = 0; offset < view.byteLength; offset += chunkSize) {
+              const slice = view.slice(offset, Math.min(view.byteLength, offset + chunkSize));
+              sendAssetUploadChunk({ canvasId, assetId, seq, bytes: slice.buffer });
+              seq += 1;
+              // Yield a bit to keep stroke events responsive
+              if (seq % 4 === 0) await sleep(10);
+              else await sleep(0);
+            }
+
+            sendAssetUploadComplete({ canvasId, assetId, timestamp: Date.now() });
+          })
+          .catch((err) => console.error('Asset upload failed:', err));
+      } catch (err) {
+        console.error('Paste handler failed:', err);
+      }
+    };
+
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [isConnected, error, canvasId, sendObjectAdded, sendAssetUploadStart, sendAssetUploadChunk, sendAssetUploadComplete]);
 
   // Handle Ctrl+Z for undo
   useEffect(() => {
@@ -234,35 +479,35 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
         if (!action) return;
 
         isUndoingRef.current = true;
-        const currentStrokes = strokesRef.current;
+        const currentObjects = objectsRef.current;
 
         if (action.type === 'add') {
-          const exists = currentStrokes.some((stroke) => stroke.id === action.stroke.id);
+          const exists = currentObjects.some((o) => o.id === action.object.id);
           if (!exists) return;
 
-          const updatedStrokes = currentStrokes.filter((stroke) => stroke.id !== action.stroke.id);
+          const updatedObjects = currentObjects.filter((o) => o.id !== action.object.id);
           if (canvasId) {
-            sendStrokeRemoved([action.stroke.id]);
+            sendObjectRemoved([action.object.id]);
           }
-          setStrokes(updatedStrokes);
+          setObjects(updatedObjects);
           return;
         }
 
-        const currentStrokeIds = new Set(currentStrokes.map((stroke) => stroke.id));
-        const strokesToRestore = action.strokes.filter((stroke) => !currentStrokeIds.has(stroke.id));
-        if (strokesToRestore.length === 0) return;
+        const currentIds = new Set(currentObjects.map((o) => o.id));
+        const objectsToRestore = action.objects.filter((o) => !currentIds.has(o.id));
+        if (objectsToRestore.length === 0) return;
 
-        const updatedStrokes = [...currentStrokes, ...strokesToRestore];
+        const updatedObjects = [...currentObjects, ...objectsToRestore];
         if (canvasId) {
-          strokesToRestore.forEach((stroke) => sendStrokeAdded(stroke));
+          objectsToRestore.forEach((o) => sendObjectAdded(o));
         }
-        setStrokes(updatedStrokes);
+        setObjects(updatedObjects);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isConnected, error, canvasId, sendStrokeRemoved, sendStrokeAdded]);
+  }, [isConnected, error, canvasId, sendObjectRemoved, sendObjectAdded]);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     // Disable drawing if not connected or if there's an error
@@ -287,15 +532,17 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     // Disable drawing if not connected or if there's an error
     if (!isConnected || error) return;
-    if (!isDrawing) return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    const point = getCanvasPoint(canvas, e.clientX, e.clientY);
+    lastPointerPositionRef.current = point;
+
+    if (!isDrawing) return;
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
-    const point = getCanvasPoint(canvas, e.clientX, e.clientY);
     // Use ref to get latest points to avoid stale state issues
     const latestPoints = currentPointsRef.current.length > 0 ? currentPointsRef.current : currentPoints;
     const newPoints = [...latestPoints, point];
@@ -332,7 +579,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     } else if (activeTool === 'eraser') {
       // Update preview: find objects that will be erased
       if (newPoints.length >= 2) {
-        const objectIdsToErase = findObjectsToErase(strokes, newPoints);
+        const objectIdsToErase = findObjectsToErase(objectsRef.current, newPoints);
         objectsToEraseRef.current = objectIdsToErase; // Store for use in mouseUp
         setObjectsToErasePreview(new Set(objectIdsToErase));
         
@@ -367,37 +614,38 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     if (activeTool === 'brush') {
       // Create a new canvas object from all points captured during this drawing session
       // Use the same ID we've been streaming with, so other clients can match it
-      const newObject: Stroke = {
+      const newObject: StrokeObject = {
         id: currentStrokeIdRef.current || uuidv4(),
+        type: 'stroke',
         tool: 'brush',
         color: brushColor,
         size: brushSize,
-        points: pointsToUse, // Collection of all points from mouseDown to mouseUp
+        points: pointsToUse,
       };
-      localActionHistoryRef.current.push({ type: 'add', stroke: newObject });
-      setStrokes((prev) => [...prev, newObject]);
-      // Send to collaboration server
+      localActionHistoryRef.current.push({ type: 'add', object: newObject });
+      setObjects((prev) => [...prev, newObject]);
       if (canvasId) {
-        sendStrokeAdded(newObject);
+        sendObjectAdded(newObject);
+      }
+
+      // Notify other users that this in-progress stroke is done
+      if (canvasId && currentStrokeIdRef.current) {
+        sendStrokeProgressEnd(currentStrokeIdRef.current);
       }
     } else if (activeTool === 'eraser') {
       // Use the stored IDs from preview instead of recalculating
       // This ensures consistency between preview and actual erase
       const objectIdsToErase = objectsToEraseRef.current;
       if (objectIdsToErase.length > 0) {
-        const currentStrokes = strokesRef.current;
-        const strokesToRemove = currentStrokes.filter((object) => objectIdsToErase.includes(object.id));
-        if (strokesToRemove.length > 0) {
-          localActionHistoryRef.current.push({ type: 'remove', strokes: strokesToRemove });
+        const currentObjects = objectsRef.current;
+        const objectsToRemove = currentObjects.filter((object) => objectIdsToErase.includes(object.id));
+        if (objectsToRemove.length > 0) {
+          localActionHistoryRef.current.push({ type: 'remove', objects: objectsToRemove });
         }
-        setStrokes((prev) => {
-          // Remove all objects that were intersected by the eraser
-          const newStrokes = prev.filter((object) => !objectIdsToErase.includes(object.id));
-          return newStrokes;
-        });
-        // Send to collaboration server
+        setObjects((prev) => prev.filter((object) => !objectIdsToErase.includes(object.id)));
+
         if (canvasId) {
-          sendStrokeRemoved(objectIdsToErase);
+          sendObjectRemoved(objectIdsToErase);
         }
       }
       objectsToEraseRef.current = []; // Clear the ref
@@ -444,13 +692,14 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     // Disable clearing if not connected or if there's an error
     if (!isConnected || error) return;
 
-    const currentStrokes = strokesRef.current;
-    if (currentStrokes.length > 0) {
-      localActionHistoryRef.current.push({ type: 'remove', strokes: currentStrokes });
+    const currentObjects = objectsRef.current;
+    if (currentObjects.length > 0) {
+      localActionHistoryRef.current.push({ type: 'remove', objects: currentObjects });
     }
-    setStrokes([]);
+    setObjects([]);
+    setImageCache(new Map());
     // Fire and forget - errors are logged in the storage module
-    storage.clearStrokes(canvasId);
+    storage.clearCanvas(canvasId);
     setObjectsToErasePreview(new Set()); // Clear preview
     // Send to collaboration server
     if (canvasId) {
@@ -460,7 +709,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
 
   return {
     canvasRef,
-    strokes,
+    objects,
     isConnected,
     error,
     isInitializing,

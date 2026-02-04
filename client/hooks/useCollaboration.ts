@@ -1,27 +1,47 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { Stroke, CollaborationMessage, CanvasStateMessage, UserPresence, CursorUpdateMessage, StrokeProgressMessage, InProgressStroke, EraserPreviewMessage } from '@/types';
+import {
+  CanvasObject,
+  CanvasStateMessage,
+  ObjectAddedMessage,
+  ObjectRemovedMessage,
+  UserPresence,
+  CursorUpdateMessage,
+  StrokeProgressMessage,
+  InProgressStroke,
+  EraserPreviewMessage,
+  AssetUploadStartMessage,
+  AssetUploadChunkMessage,
+  AssetUploadCompleteMessage,
+  AssetAvailableMessage,
+  AssetRequestMessage,
+  AssetChunkMessage,
+  AssetCompleteMessage,
+} from '@/types';
 
 interface UseCollaborationProps {
   canvasId: string;
   userName: string;
-  onStrokeAdded: (stroke: Stroke) => void;
-  onStrokeRemoved: (strokeIds: string[]) => void;
+  onObjectAdded: (object: CanvasObject) => void;
+  onObjectRemoved: (objectIds: string[]) => void;
   onCanvasCleared: () => void;
-  onCanvasState: (strokes: Stroke[]) => void;
+  onCanvasState: (objects: CanvasObject[]) => void;
   onCursorUpdate?: (user: UserPresence) => void;
   onCursorStop?: (nodeId: string) => void;
   onStrokeProgress?: (progressData: InProgressStroke) => void;
   onStrokeProgressEnd?: (nodeId: string, nodeIdStrokeId: string) => void;
-  onEraserPreview?: (nodeId: string, strokeIds: string[]) => void;
+  onEraserPreview?: (nodeId: string, objectIds: string[]) => void;
   onEraserPreviewEnd?: (nodeId: string) => void;
+  onAssetAvailable?: (assetId: string) => void;
+  onAssetChunk?: (assetId: string, seq: number, bytes: ArrayBuffer) => void;
+  onAssetComplete?: (assetId: string, totalBytes: number) => void;
 }
 
 export function useCollaboration({
   canvasId,
   userName,
-  onStrokeAdded,
-  onStrokeRemoved,
+  onObjectAdded,
+  onObjectRemoved,
   onCanvasCleared,
   onCanvasState,
   onCursorUpdate,
@@ -30,20 +50,23 @@ export function useCollaboration({
   onStrokeProgressEnd,
   onEraserPreview,
   onEraserPreviewEnd,
+  onAssetAvailable,
+  onAssetChunk,
+  onAssetComplete,
 }: UseCollaborationProps) {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const socketRef = useRef<Socket | null>(null);
-  const isLocalActionRef = useRef(false); // Prevent echo loops
+  const isLocalActionRef = useRef(false); // Prevent echo loops for canvas objects
   const lastCursorUpdateRef = useRef<number>(0); // For throttling cursor updates
   const lastStrokeProgressRef = useRef<number>(0); // For throttling stroke progress updates
   const lastEraserPreviewRef = useRef<number>(0); // For throttling eraser preview updates
   
   // Store callbacks in refs to avoid reconnecting when they change
   const callbacksRef = useRef({
-    onStrokeAdded,
-    onStrokeRemoved,
+    onObjectAdded,
+    onObjectRemoved,
     onCanvasCleared,
     onCanvasState,
     onCursorUpdate,
@@ -52,13 +75,16 @@ export function useCollaboration({
     onStrokeProgressEnd,
     onEraserPreview,
     onEraserPreviewEnd,
+    onAssetAvailable,
+    onAssetChunk,
+    onAssetComplete,
   });
 
   // Update callbacks ref when they change
   useEffect(() => {
     callbacksRef.current = {
-      onStrokeAdded,
-      onStrokeRemoved,
+      onObjectAdded,
+      onObjectRemoved,
       onCanvasCleared,
       onCanvasState,
       onCursorUpdate,
@@ -67,8 +93,11 @@ export function useCollaboration({
       onStrokeProgressEnd,
       onEraserPreview,
       onEraserPreviewEnd,
+      onAssetAvailable,
+      onAssetChunk,
+      onAssetComplete,
     };
-  }, [onStrokeAdded, onStrokeRemoved, onCanvasCleared, onCanvasState, onCursorUpdate, onCursorStop, onStrokeProgress, onStrokeProgressEnd, onEraserPreview, onEraserPreviewEnd]);
+  }, [onObjectAdded, onObjectRemoved, onCanvasCleared, onCanvasState, onCursorUpdate, onCursorStop, onStrokeProgress, onStrokeProgressEnd, onEraserPreview, onEraserPreviewEnd, onAssetAvailable, onAssetChunk, onAssetComplete]);
 
   useEffect(() => {
     if (!canvasId) {
@@ -107,41 +136,39 @@ export function useCollaboration({
     socket.on('connect_error', (error) => {
       console.error('WebSocket connection error:', error);
       setIsConnected(false);
+      setError(error?.message || 'Unable to connect to collaboration server');
+      setIsInitializing(false);
     });
 
     // Handle initial canvas state
     socket.on('canvas-state', (data: CanvasStateMessage) => {
-      if (data.canvasId === canvasId && data.strokes) {
-        console.log('Received canvas state:', data.strokes.length, 'strokes');
+      if (data.canvasId === canvasId && Array.isArray(data.objects)) {
         setIsInitializing(false); // User successfully joined, initialization complete
         isLocalActionRef.current = true; // Prevent echo
-        callbacksRef.current.onCanvasState(data.strokes);
+        callbacksRef.current.onCanvasState(data.objects);
         setTimeout(() => {
           isLocalActionRef.current = false;
         }, 100);
       }
     });
 
-    // Handle remote stroke added
-    socket.on('stroke-added', (data: CollaborationMessage) => {
-      if (data.canvasId === canvasId && data.stroke && !isLocalActionRef.current) {
-        console.log('Received remote stroke:', data.stroke.id);
-        callbacksRef.current.onStrokeAdded(data.stroke);
+    // Handle remote object added
+    socket.on('object-added', (data: ObjectAddedMessage) => {
+      if (data.canvasId === canvasId && data.object && !isLocalActionRef.current) {
+        callbacksRef.current.onObjectAdded(data.object);
       }
     });
 
-    // Handle remote stroke removed
-    socket.on('stroke-removed', (data: CollaborationMessage) => {
-      if (data.canvasId === canvasId && data.strokeIds && !isLocalActionRef.current) {
-        console.log('Received remote stroke removal:', data.strokeIds);
-        callbacksRef.current.onStrokeRemoved(data.strokeIds);
+    // Handle remote object removed
+    socket.on('object-removed', (data: ObjectRemovedMessage) => {
+      if (data.canvasId === canvasId && Array.isArray(data.objectIds) && !isLocalActionRef.current) {
+        callbacksRef.current.onObjectRemoved(data.objectIds);
       }
     });
 
     // Handle remote canvas cleared
-    socket.on('canvas-cleared', (data: CollaborationMessage) => {
+    socket.on('canvas-cleared', (data: { canvasId: string }) => {
       if (data.canvasId === canvasId && !isLocalActionRef.current) {
-        console.log('Received remote canvas clear');
         callbacksRef.current.onCanvasCleared();
       }
     });
@@ -182,10 +209,10 @@ export function useCollaboration({
       }
     });
 
-    // Handle remote eraser preview (real-time streaming of strokes to be erased)
+    // Handle remote eraser preview (real-time streaming of objects to be erased)
     socket.on('eraser-preview', (data: EraserPreviewMessage) => {
       if (data.canvasId === canvasId && callbacksRef.current.onEraserPreview) {
-        callbacksRef.current.onEraserPreview(data.nodeId, data.strokeIds);
+        callbacksRef.current.onEraserPreview(data.nodeId, data.objectIds);
       }
     });
 
@@ -193,6 +220,27 @@ export function useCollaboration({
     socket.on('eraser-preview-end', (data: { nodeId: string }) => {
       if (callbacksRef.current.onEraserPreviewEnd) {
         callbacksRef.current.onEraserPreviewEnd(data.nodeId);
+      }
+    });
+
+    // Assets: server indicates an asset is available in memory (after upload)
+    socket.on('asset-available', (data: AssetAvailableMessage) => {
+      if (data.canvasId === canvasId && callbacksRef.current.onAssetAvailable) {
+        callbacksRef.current.onAssetAvailable(data.assetId);
+      }
+    });
+
+    // Assets: incoming chunk for an asset request
+    socket.on('asset-chunk', (data: AssetChunkMessage) => {
+      if (data.canvasId === canvasId && callbacksRef.current.onAssetChunk) {
+        callbacksRef.current.onAssetChunk(data.assetId, data.seq, data.bytes);
+      }
+    });
+
+    // Assets: completed asset transfer
+    socket.on('asset-complete', (data: AssetCompleteMessage) => {
+      if (data.canvasId === canvasId && callbacksRef.current.onAssetComplete) {
+        callbacksRef.current.onAssetComplete(data.assetId, data.totalBytes);
       }
     });
 
@@ -209,16 +257,16 @@ export function useCollaboration({
     };
   }, [canvasId]); // Only depend on canvasId, not the callbacks
 
-  // Send stroke added to server
-  const sendStrokeAdded = useCallback(
-    (stroke: Stroke) => {
+  // Send object added to server
+  const sendObjectAdded = useCallback(
+    (object: CanvasObject) => {
       if (socketRef.current && socketRef.current.connected && canvasId) {
         isLocalActionRef.current = true;
-        socketRef.current.emit('stroke-added', {
+        socketRef.current.emit('object-added', {
           canvasId,
-          stroke,
+          object,
           timestamp: Date.now(),
-        });
+        } satisfies ObjectAddedMessage);
         setTimeout(() => {
           isLocalActionRef.current = false;
         }, 100);
@@ -227,16 +275,16 @@ export function useCollaboration({
     [canvasId]
   );
 
-  // Send stroke removed to server
-  const sendStrokeRemoved = useCallback(
-    (strokeIds: string[]) => {
+  // Send object removed to server
+  const sendObjectRemoved = useCallback(
+    (objectIds: string[]) => {
       if (socketRef.current && socketRef.current.connected && canvasId) {
         isLocalActionRef.current = true;
-        socketRef.current.emit('stroke-removed', {
+        socketRef.current.emit('object-removed', {
           canvasId,
-          strokeIds,
+          objectIds,
           timestamp: Date.now(),
-        });
+        } satisfies ObjectRemovedMessage);
         setTimeout(() => {
           isLocalActionRef.current = false;
         }, 100);
@@ -258,6 +306,46 @@ export function useCollaboration({
       }, 100);
     }
   }, [canvasId]);
+
+  // Assets: upload start
+  const sendAssetUploadStart = useCallback(
+    (payload: AssetUploadStartMessage) => {
+      if (socketRef.current?.connected && canvasId) {
+        socketRef.current.emit('asset-upload-start', payload);
+      }
+    },
+    [canvasId]
+  );
+
+  // Assets: upload chunk
+  const sendAssetUploadChunk = useCallback(
+    (payload: AssetUploadChunkMessage) => {
+      if (socketRef.current?.connected && canvasId) {
+        socketRef.current.emit('asset-upload-chunk', payload);
+      }
+    },
+    [canvasId]
+  );
+
+  // Assets: upload complete
+  const sendAssetUploadComplete = useCallback(
+    (payload: AssetUploadCompleteMessage) => {
+      if (socketRef.current?.connected && canvasId) {
+        socketRef.current.emit('asset-upload-complete', payload);
+      }
+    },
+    [canvasId]
+  );
+
+  // Assets: request
+  const sendAssetRequest = useCallback(
+    (payload: AssetRequestMessage) => {
+      if (socketRef.current?.connected && canvasId) {
+        socketRef.current.emit('asset-request', payload);
+      }
+    },
+    [canvasId]
+  );
 
   // Send cursor update to server (throttled to ~50ms)
   const sendCursorUpdate = useCallback(
@@ -324,7 +412,7 @@ export function useCollaboration({
 
   // Send eraser preview to server (throttled to ~50ms)
   const sendEraserPreview = useCallback(
-    (strokeIds: string[]) => {
+    (objectIds: string[]) => {
       const now = Date.now();
       // Throttle eraser preview updates to avoid flooding the server
       if (now - lastEraserPreviewRef.current < 50) {
@@ -335,7 +423,7 @@ export function useCollaboration({
       if (socketRef.current?.connected && canvasId) {
         socketRef.current.emit('eraser-preview', {
           canvasId,
-          strokeIds,
+          objectIds,
         });
       }
     },
@@ -355,8 +443,8 @@ export function useCollaboration({
     isConnected,
     error,
     isInitializing,
-    sendStrokeAdded,
-    sendStrokeRemoved,
+    sendObjectAdded,
+    sendObjectRemoved,
     sendCanvasCleared,
     sendCursorUpdate,
     sendCursorStop,
@@ -364,6 +452,10 @@ export function useCollaboration({
     sendStrokeProgressEnd,
     sendEraserPreview,
     sendEraserPreviewEnd,
+    sendAssetUploadStart,
+    sendAssetUploadChunk,
+    sendAssetUploadComplete,
+    sendAssetRequest,
   };
 }
 

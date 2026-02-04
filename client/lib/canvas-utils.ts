@@ -1,8 +1,8 @@
-import { Stroke, Point, InProgressStroke } from '@/types';
+import { CanvasObject, StrokeObject, ImageObject, Point, InProgressStroke } from '@/types';
 
 export function drawStroke(
   ctx: CanvasRenderingContext2D,
-  stroke: Stroke,
+  stroke: StrokeObject,
   opacity: number = 1.0
 ): void {
   if (stroke.points.length < 2) return;
@@ -10,7 +10,7 @@ export function drawStroke(
   // Convert color to rgba for opacity support
   const color = stroke.color;
   let rgbaColor = color;
-  
+
   if (opacity < 1.0) {
     // If color is hex, convert to rgba
     if (color.startsWith('#')) {
@@ -42,6 +42,33 @@ export function drawStroke(
   ctx.stroke();
 }
 
+function drawImageObject(
+  ctx: CanvasRenderingContext2D,
+  image: ImageObject,
+  source: CanvasImageSource | undefined,
+  opacity: number
+): void {
+  ctx.save();
+  ctx.globalAlpha = opacity;
+
+  if (source) {
+    ctx.drawImage(source, image.x, image.y, image.width, image.height);
+  } else {
+    // Placeholder
+    ctx.fillStyle = 'rgba(156, 163, 175, 0.25)';
+    ctx.strokeStyle = 'rgba(107, 114, 128, 0.6)';
+    ctx.lineWidth = 2;
+    ctx.fillRect(image.x, image.y, image.width, image.height);
+    ctx.strokeRect(image.x, image.y, image.width, image.height);
+
+    ctx.fillStyle = 'rgba(107, 114, 128, 0.9)';
+    ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+    ctx.fillText('Loading image…', image.x + 8, image.y + 20);
+  }
+
+  ctx.restore();
+}
+
 export function clearCanvas(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -50,23 +77,30 @@ export function clearCanvas(
   ctx.clearRect(0, 0, width, height);
 }
 
-export function renderAllStrokes(
+export function renderAllObjects(
   ctx: CanvasRenderingContext2D,
-  strokes: Stroke[],
+  objects: CanvasObject[],
   width: number,
   height: number,
   objectsToErasePreview: Set<string> = new Set(),
-  inProgressStrokes: Map<string, InProgressStroke> = new Map()
+  inProgressStrokes: Map<string, InProgressStroke> = new Map(),
+  imageCache: Map<string, CanvasImageSource> = new Map()
 ): void {
   clearCanvas(ctx, width, height);
-  
-  // Render committed strokes
-  strokes.forEach((stroke) => {
-    // Render with reduced opacity if it's in the preview set
-    const opacity = objectsToErasePreview.has(stroke.id) ? 0.5 : 1.0;
-    drawStroke(ctx, stroke, opacity);
+
+  // Render committed objects in order
+  objects.forEach((obj) => {
+    const opacity = objectsToErasePreview.has(obj.id) ? 0.5 : 1.0;
+
+    if (obj.type === 'stroke') {
+      drawStroke(ctx, obj, opacity);
+      return;
+    }
+
+    const source = imageCache.get(obj.assetId);
+    drawImageObject(ctx, obj, source, opacity);
   });
-  
+
   // Render in-progress strokes from remote users (slightly transparent)
   inProgressStrokes.forEach((inProgressStroke) => {
     drawInProgressStroke(ctx, inProgressStroke);
@@ -82,12 +116,12 @@ export function drawInProgressStroke(
   stroke: InProgressStroke
 ): void {
   if (stroke.points.length < 2) return;
-  
+
   // Use 70% opacity for in-progress strokes
   const opacity = 0.7;
   const color = stroke.color;
   let rgbaColor = color;
-  
+
   // Convert color to rgba for opacity support
   if (color.startsWith('#')) {
     const r = parseInt(color.slice(1, 3), 16);
@@ -141,49 +175,75 @@ function doLineSegmentsIntersect(
   const d2 = (p4.x - p3.x) * (p2.y - p3.y) - (p4.y - p3.y) * (p2.x - p3.x);
   const d3 = (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x);
   const d4 = (p2.x - p1.x) * (p4.y - p1.y) - (p2.y - p1.y) * (p4.x - p1.x);
-  
-  return (d1 * d2 < 0 && d3 * d4 < 0);
+
+  return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
+function pointInRect(p: Point, r: { x: number; y: number; w: number; h: number }): boolean {
+  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+}
+
+function segmentIntersectsRect(p1: Point, p2: Point, r: { x: number; y: number; w: number; h: number }): boolean {
+  // Endpoint inside
+  if (pointInRect(p1, r) || pointInRect(p2, r)) return true;
+
+  const tl: Point = { x: r.x, y: r.y };
+  const tr: Point = { x: r.x + r.w, y: r.y };
+  const br: Point = { x: r.x + r.w, y: r.y + r.h };
+  const bl: Point = { x: r.x, y: r.y + r.h };
+
+  return (
+    doLineSegmentsIntersect(p1, p2, tl, tr) ||
+    doLineSegmentsIntersect(p1, p2, tr, br) ||
+    doLineSegmentsIntersect(p1, p2, br, bl) ||
+    doLineSegmentsIntersect(p1, p2, bl, tl)
+  );
 }
 
 /**
  * Finds which objects intersect with the eraser path.
- * Returns an array of object IDs that should be erased.
- * Checks line segment intersections between eraser path and object paths.
  */
-export function findObjectsToErase(
-  objects: Stroke[],
-  eraserPath: Point[]
-): string[] {
+export function findObjectsToErase(objects: CanvasObject[], eraserPath: Point[]): string[] {
   const objectsToErase = new Set<string>();
-  
+
   // Need at least 2 points for line segments
   if (eraserPath.length < 2) {
     return [];
   }
-  
-  // Check each object's path against the eraser path
+
   objects.forEach((object) => {
-    // Need at least 2 points for line segments
+    // Erase images via rect hit test
+    if (object.type === 'image') {
+      const rect = { x: object.x, y: object.y, w: object.width, h: object.height };
+      for (let i = 0; i < eraserPath.length - 1; i++) {
+        if (segmentIntersectsRect(eraserPath[i], eraserPath[i + 1], rect)) {
+          objectsToErase.add(object.id);
+          return;
+        }
+      }
+      return;
+    }
+
+    // Strokes: segment intersection with stroke polyline
     if (object.points.length < 2) {
       return;
     }
-    
-    // Check if any eraser segment intersects with any object segment
+
     for (let i = 0; i < eraserPath.length - 1; i++) {
       const eraserStart = eraserPath[i];
       const eraserEnd = eraserPath[i + 1];
-      
+
       for (let j = 0; j < object.points.length - 1; j++) {
         const objectStart = object.points[j];
         const objectEnd = object.points[j + 1];
-        
+
         if (doLineSegmentsIntersect(eraserStart, eraserEnd, objectStart, objectEnd)) {
           objectsToErase.add(object.id);
-          return; // Found intersection, no need to check more segments
+          return;
         }
       }
     }
   });
-  
+
   return Array.from(objectsToErase);
 }

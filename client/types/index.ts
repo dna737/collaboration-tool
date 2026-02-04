@@ -4,16 +4,37 @@ export interface Point {
 }
 
 /**
- * Represents a canvas object (stroke) - a collection of points
- * captured from mouseDown to mouseUp, forming a single drawable object.
+ * A committed stroke on the canvas.
  */
-export interface Stroke {
+export interface StrokeObject {
   id: string;
+  type: 'stroke';
   tool: 'brush' | 'eraser';
   color: string;
   size: number;
-  points: Point[]; // Collection of points that form this object
+  points: Point[];
 }
+
+/**
+ * A pasted image placed on the canvas.
+ * The binary bytes are stored separately (IndexedDB + server asset map).
+ */
+export interface ImageObject {
+  id: string;
+  type: 'image';
+  assetId: string;
+  mime: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  createdAt: number;
+}
+
+export type CanvasObject = StrokeObject | ImageObject;
+
+// Backwards-compatible alias (many files use Stroke today)
+export type Stroke = StrokeObject;
 
 export type Tool = 'brush' | 'eraser';
 
@@ -25,17 +46,26 @@ export interface CanvasSettings {
 
 export type CanvasId = string;
 
-export interface CollaborationMessage {
-  type: 'stroke-added' | 'stroke-removed' | 'canvas-cleared';
+export interface CanvasStateMessage {
   canvasId: string;
-  stroke?: Stroke;
-  strokeIds?: string[];
+  objects: CanvasObject[];
+}
+
+export interface ObjectAddedMessage {
+  canvasId: string;
+  object: CanvasObject;
   timestamp?: number;
 }
 
-export interface CanvasStateMessage {
+export interface ObjectRemovedMessage {
   canvasId: string;
-  strokes: Stroke[];
+  objectIds: string[];
+  timestamp?: number;
+}
+
+export interface CanvasClearedMessage {
+  canvasId: string;
+  timestamp?: number;
 }
 
 export interface UserPresence {
@@ -54,8 +84,8 @@ export interface CursorUpdateMessage {
 
 export interface StrokeProgressMessage {
   canvasId: string;
-  nodeId: string;              // Socket ID of the user drawing
-  nodeIdStrokeId: string;      // Temporary ID for this in-progress stroke
+  nodeId: string; // Socket ID of the user drawing
+  nodeIdStrokeId: string; // Temporary ID for this in-progress stroke
   stroke: {
     tool: 'brush' | 'eraser';
     color: string;
@@ -78,6 +108,52 @@ export interface InProgressStroke {
 export interface EraserPreviewMessage {
   canvasId: string;
   nodeId: string;
-  strokeIds: string[];
+  objectIds: string[];
   timestamp: number;
+}
+
+// Binary asset transfer (chunked)
+export interface AssetUploadStartMessage {
+  canvasId: string;
+  assetId: string;
+  mime: string;
+  totalBytes: number;
+  chunkSize: number;
+  timestamp?: number;
+}
+
+export interface AssetUploadChunkMessage {
+  canvasId: string;
+  assetId: string;
+  seq: number;
+  bytes: ArrayBuffer;
+}
+
+export interface AssetUploadCompleteMessage {
+  canvasId: string;
+  assetId: string;
+  timestamp?: number;
+}
+
+export interface AssetAvailableMessage {
+  canvasId: string;
+  assetId: string;
+}
+
+export interface AssetRequestMessage {
+  canvasId: string;
+  assetId: string;
+}
+
+export interface AssetChunkMessage {
+  canvasId: string;
+  assetId: string;
+  seq: number;
+  bytes: ArrayBuffer;
+}
+
+export interface AssetCompleteMessage {
+  canvasId: string;
+  assetId: string;
+  totalBytes: number;
 }
