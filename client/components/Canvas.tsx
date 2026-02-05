@@ -46,6 +46,7 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
     error,
     isInitializing,
     isDraggingSelection,
+    selectCursor,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,
@@ -228,7 +229,7 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
   } else if (activeTool === 'eraser') {
     canvasCursor = 'none';
   } else if (activeTool === 'select') {
-    canvasCursor = isDraggingSelection ? 'grabbing' : 'grab';
+    canvasCursor = selectCursor;
   }
 
   return (

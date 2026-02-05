@@ -8,6 +8,10 @@ export interface Rect {
   h: number;
 }
 
+export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+
+const RESIZE_HANDLE_SIZE = 8;
+
 export function drawStroke(
   ctx: CanvasRenderingContext2D,
   stroke: StrokeObject,
@@ -198,20 +202,80 @@ export function getCanvasPoint(
   };
 }
 
+function normalizeRect(rect: Rect): Rect {
+  const x = rect.w >= 0 ? rect.x : rect.x + rect.w;
+  const y = rect.h >= 0 ? rect.y : rect.y + rect.h;
+  return { x, y, w: Math.abs(rect.w), h: Math.abs(rect.h) };
+}
+
+export function getImageRect(image: ImageObject): Rect {
+  return normalizeRect({ x: image.x, y: image.y, w: image.width, h: image.height });
+}
+
 export function findTopImageAtPoint(objects: CanvasObject[], point: Point): ImageObject | null {
   for (let i = objects.length - 1; i >= 0; i--) {
     const obj = objects[i];
     if (obj.type !== 'image') continue;
-    if (
-      point.x >= obj.x &&
-      point.x <= obj.x + obj.width &&
-      point.y >= obj.y &&
-      point.y <= obj.y + obj.height
-    ) {
+    const rect = getImageRect(obj);
+    if (point.x >= rect.x && point.x <= rect.x + rect.w && point.y >= rect.y && point.y <= rect.y + rect.h) {
       return obj;
     }
   }
   return null;
+}
+
+/**
+ * Returns all objects hit by a click point.
+ * Images: point-in-rect (normalized for negative sizes).
+ * Strokes: point within full stroke size of any segment.
+ */
+function distanceSquaredToSegment(point: Point, a: Point, b: Point): number {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const apx = point.x - a.x;
+  const apy = point.y - a.y;
+  const denom = abx * abx + aby * aby;
+
+  if (denom === 0) {
+    return apx * apx + apy * apy;
+  }
+
+  let t = (apx * abx + apy * aby) / denom;
+  if (t < 0) t = 0;
+  if (t > 1) t = 1;
+
+  const closestX = a.x + t * abx;
+  const closestY = a.y + t * aby;
+  const dx = point.x - closestX;
+  const dy = point.y - closestY;
+  return dx * dx + dy * dy;
+}
+
+export function findObjectsAtPoint(objects: CanvasObject[], point: Point): CanvasObject[] {
+  return objects.filter((obj) => {
+    if (obj.type === 'image') {
+      const rect = getImageRect(obj);
+      return point.x >= rect.x && point.x <= rect.x + rect.w && point.y >= rect.y && point.y <= rect.y + rect.h;
+    }
+
+    if (obj.points.length === 0) return false;
+    const radius = obj.size;
+    const radiusSq = radius * radius;
+    if (obj.points.length === 1) {
+      const dx = point.x - obj.points[0].x;
+      const dy = point.y - obj.points[0].y;
+      return dx * dx + dy * dy <= radiusSq;
+    }
+
+    for (let i = 0; i < obj.points.length - 1; i++) {
+      const p1 = obj.points[i];
+      const p2 = obj.points[i + 1];
+      if (distanceSquaredToSegment(point, p1, p2) <= radiusSq) {
+        return true;
+      }
+    }
+    return false;
+  });
 }
 
 /**
@@ -220,7 +284,7 @@ export function findTopImageAtPoint(objects: CanvasObject[], point: Point): Imag
  */
 export function getObjectBoundingBox(obj: CanvasObject): Rect {
   if (obj.type === 'image') {
-    return { x: obj.x, y: obj.y, w: obj.width, h: obj.height };
+    return getImageRect(obj);
   }
   // Stroke: bounding box of points, expanded by half line width
   if (obj.points.length === 0) {
@@ -294,6 +358,58 @@ export function getObjectsFullyInRect(objects: CanvasObject[], rect: Rect): Canv
  */
 export function pointInRect(p: Point, r: Rect): boolean {
   return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+}
+
+export function getResizeHandles(rect: Rect): { id: ResizeHandle; rect: Rect }[] {
+  const normalized = normalizeRect(rect);
+  const half = RESIZE_HANDLE_SIZE / 2;
+  const left = normalized.x;
+  const right = normalized.x + normalized.w;
+  const top = normalized.y;
+  const bottom = normalized.y + normalized.h;
+  const midX = normalized.x + normalized.w / 2;
+  const midY = normalized.y + normalized.h / 2;
+
+  const handleRect = (cx: number, cy: number): Rect => ({
+    x: cx - half,
+    y: cy - half,
+    w: RESIZE_HANDLE_SIZE,
+    h: RESIZE_HANDLE_SIZE,
+  });
+
+  return [
+    { id: 'nw', rect: handleRect(left, top) },
+    { id: 'n', rect: handleRect(midX, top) },
+    { id: 'ne', rect: handleRect(right, top) },
+    { id: 'e', rect: handleRect(right, midY) },
+    { id: 'se', rect: handleRect(right, bottom) },
+    { id: 's', rect: handleRect(midX, bottom) },
+    { id: 'sw', rect: handleRect(left, bottom) },
+    { id: 'w', rect: handleRect(left, midY) },
+  ];
+}
+
+export function drawResizeHandles(ctx: CanvasRenderingContext2D, rect: Rect): void {
+  const handles = getResizeHandles(rect);
+  ctx.save();
+  ctx.fillStyle = 'white';
+  ctx.strokeStyle = 'rgba(59, 130, 246, 0.9)';
+  ctx.lineWidth = 1;
+  handles.forEach((handle) => {
+    ctx.fillRect(handle.rect.x, handle.rect.y, handle.rect.w, handle.rect.h);
+    ctx.strokeRect(handle.rect.x, handle.rect.y, handle.rect.w, handle.rect.h);
+  });
+  ctx.restore();
+}
+
+export function hitTestResizeHandle(point: Point, rect: Rect): ResizeHandle | null {
+  const handles = getResizeHandles(rect);
+  for (const handle of handles) {
+    if (pointInRect(point, handle.rect)) {
+      return handle.id;
+    }
+  }
+  return null;
 }
 
 /**
@@ -386,7 +502,7 @@ export function findObjectsToErase(objects: CanvasObject[], eraserPath: Point[])
   objects.forEach((object) => {
     // Erase images via rect hit test
     if (object.type === 'image') {
-      const rect = { x: object.x, y: object.y, w: object.width, h: object.height };
+      const rect = getImageRect(object);
       for (let i = 0; i < eraserPath.length - 1; i++) {
         if (segmentIntersectsRect(eraserPath[i], eraserPath[i + 1], rect)) {
           objectsToErase.add(object.id);

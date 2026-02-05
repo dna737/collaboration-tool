@@ -7,7 +7,11 @@ import {
   findObjectsToErase,
   getSelectionBoundingBox,
   getObjectsFullyInRect,
-  findTopImageAtPoint,
+  findObjectsAtPoint,
+  getImageRect,
+  drawResizeHandles,
+  hitTestResizeHandle,
+  ResizeHandle,
   pointInRect,
   drawSelectionBox,
   drawMarqueeRect,
@@ -140,12 +144,33 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
 
   const lastPointerPositionRef = useRef<Point | null>(null);
   const lastObjectUpdateRef = useRef<number>(0);
+  const [selectCursor, setSelectCursor] = useState('grab');
+  const selectCursorRef = useRef(selectCursor);
 
   // Selection (Excalidraw-style): marquee select + drag from selection box
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [selectionRect, setSelectionRect] = useState<{ start: Point; end: Point } | null>(null);
   const [isDraggingSelection, setIsDraggingSelection] = useState(false);
   const dragSelectionRef = useRef<{ lastPoint: Point } | null>(null);
+  const resizeSelectionRef = useRef<{
+    imageId: string;
+    handle: ResizeHandle;
+    startBounds: { left: number; right: number; top: number; bottom: number };
+  } | null>(null);
+
+  const updateSelectCursor = (next: string) => {
+    if (selectCursorRef.current !== next) {
+      selectCursorRef.current = next;
+      setSelectCursor(next);
+    }
+  };
+
+  const getResizeCursor = (handle: ResizeHandle): string => {
+    if (handle === 'nw' || handle === 'se') return 'nwse-resize';
+    if (handle === 'ne' || handle === 'sw') return 'nesw-resize';
+    if (handle === 'n' || handle === 's') return 'ns-resize';
+    return 'ew-resize';
+  };
 
   // Asset cache for rendering
   const [imageCache, setImageCache] = useState<Map<string, CanvasImageSource>>(new Map());
@@ -314,6 +339,31 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     return updated;
   };
 
+  const updateImageGeometry = (
+    imageId: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  ): ImageObject | null => {
+    const current = objectsRef.current;
+    let updated: ImageObject | null = null;
+    const next = current.map((obj) => {
+      if (obj.id === imageId && obj.type === 'image') {
+        updated = { ...obj, x, y, width, height };
+        return updated;
+      }
+      return obj;
+    });
+
+    if (updated) {
+      objectsRef.current = next;
+      setObjects(next);
+    }
+
+    return updated;
+  };
+
   const maybeSendObjectUpdate = (object: CanvasObject, force = false) => {
     if (!canvasId) return;
     const now = Date.now();
@@ -382,6 +432,13 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       const box = getSelectionBoundingBox(selectedObjects);
       if (box) {
         drawSelectionBox(ctx, box);
+      }
+    }
+    if (selectedObjectIds.length === 1) {
+      const selected = objects.find((o) => o.id === selectedObjectIds[0]);
+      if (selected && selected.type === 'image') {
+        const imageRect = getImageRect(selected);
+        drawResizeHandles(ctx, imageRect);
       }
     }
     if (selectionRect) {
@@ -609,6 +666,29 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
 
     if (activeTool === 'select') {
       const selectedObjects = objectsRef.current.filter((o) => selectedObjectIds.includes(o.id));
+      const singleSelected =
+        selectedObjectIds.length === 1 ? selectedObjects.find((o) => o.id === selectedObjectIds[0]) : null;
+      if (singleSelected && singleSelected.type === 'image') {
+        const imageRect = getImageRect(singleSelected);
+        const handle = hitTestResizeHandle(point, imageRect);
+        if (handle) {
+          resizeSelectionRef.current = {
+            imageId: singleSelected.id,
+            handle,
+            startBounds: {
+              left: imageRect.x,
+              right: imageRect.x + imageRect.w,
+              top: imageRect.y,
+              bottom: imageRect.y + imageRect.h,
+            },
+          };
+          dragSelectionRef.current = null;
+          setIsDraggingSelection(false);
+          setSelectionRect(null);
+          setIsDrawing(true);
+          return;
+        }
+      }
       const selectionBox = getSelectionBoundingBox(selectedObjects);
       const insideBox = selectionBox && selectedObjectIds.length > 0 && pointInRect(point, selectionBox);
       if (insideBox) {
@@ -617,9 +697,9 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
         setIsDrawing(true);
         return;
       }
-      const hitImage = findTopImageAtPoint(objectsRef.current, point);
-      if (hitImage) {
-        setSelectedObjectIds([hitImage.id]);
+      const hitObjects = findObjectsAtPoint(objectsRef.current, point);
+      if (hitObjects.length > 0) {
+        setSelectedObjectIds(hitObjects.map((obj) => obj.id));
         dragSelectionRef.current = { lastPoint: point };
         setIsDraggingSelection(true);
         setIsDrawing(true);
@@ -653,9 +733,83 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     const point = getCanvasPoint(canvas, e.clientX, e.clientY);
     lastPointerPositionRef.current = point;
 
-    if (!isDrawing) return;
-
     if (activeTool === 'select') {
+      const selectedObjects = objectsRef.current.filter((o) => selectedObjectIds.includes(o.id));
+      const selectionBox = getSelectionBoundingBox(selectedObjects);
+      if (resizeSelectionRef.current) {
+        updateSelectCursor(getResizeCursor(resizeSelectionRef.current.handle));
+      } else if (dragSelectionRef.current || isDraggingSelection) {
+        updateSelectCursor('move');
+      } else if (selectedObjectIds.length === 1) {
+        const selected = selectedObjects[0];
+        if (selected && selected.type === 'image') {
+          const imageRect = getImageRect(selected);
+          const handle = hitTestResizeHandle(point, imageRect);
+          if (handle) {
+            updateSelectCursor(getResizeCursor(handle));
+          } else if (selectionBox && pointInRect(point, selectionBox)) {
+            updateSelectCursor('move');
+          } else {
+            updateSelectCursor('grab');
+          }
+        } else if (selectionBox && pointInRect(point, selectionBox)) {
+          updateSelectCursor('move');
+        } else {
+          updateSelectCursor('grab');
+        }
+      } else if (selectionBox && pointInRect(point, selectionBox)) {
+        updateSelectCursor('move');
+      } else {
+        updateSelectCursor('grab');
+      }
+
+      if (!isDrawing) return;
+
+      const resize = resizeSelectionRef.current;
+      if (resize) {
+        let { left, right, top, bottom } = resize.startBounds;
+        switch (resize.handle) {
+          case 'nw':
+            left = point.x;
+            top = point.y;
+            break;
+          case 'n':
+            top = point.y;
+            break;
+          case 'ne':
+            right = point.x;
+            top = point.y;
+            break;
+          case 'e':
+            right = point.x;
+            break;
+          case 'se':
+            right = point.x;
+            bottom = point.y;
+            break;
+          case 's':
+            bottom = point.y;
+            break;
+          case 'sw':
+            left = point.x;
+            bottom = point.y;
+            break;
+          case 'w':
+            left = point.x;
+            break;
+          default:
+            break;
+        }
+
+        const updated = updateImageGeometry(resize.imageId, left, top, right - left, bottom - top);
+        if (updated) {
+          maybeSendObjectUpdate(updated);
+          if (canvasId) {
+            sendCursorUpdate(point, true, 'select');
+          }
+        }
+        return;
+      }
       const drag = dragSelectionRef.current;
       if (drag) {
         const dx = point.x - drag.lastPoint.x;
@@ -685,6 +839,8 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       }
       return;
     }
+
+    if (!isDrawing) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -746,6 +902,17 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     }
 
     if (activeTool === 'select') {
+      const resize = resizeSelectionRef.current;
+      if (resize) {
+        const current = objectsRef.current.find((obj) => obj.id === resize.imageId);
+        if (current) {
+          maybeSendObjectUpdate(current, true);
+        }
+        resizeSelectionRef.current = null;
+        setIsDrawing(false);
+        if (canvasId) sendCursorStop();
+        return;
+      }
       const drag = dragSelectionRef.current;
       if (drag) {
         const current = objectsRef.current;
@@ -895,6 +1062,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     error,
     isInitializing,
     isDraggingSelection,
+    selectCursor,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,
