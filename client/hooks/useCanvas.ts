@@ -7,6 +7,7 @@ import {
   findObjectsToErase,
   getSelectionBoundingBox,
   getObjectsFullyInRect,
+  findTopImageAtPoint,
   pointInRect,
   drawSelectionBox,
   drawMarqueeRect,
@@ -611,6 +612,14 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       const selectionBox = getSelectionBoundingBox(selectedObjects);
       const insideBox = selectionBox && selectedObjectIds.length > 0 && pointInRect(point, selectionBox);
       if (insideBox) {
+        dragSelectionRef.current = { lastPoint: point };
+        setIsDraggingSelection(true);
+        setIsDrawing(true);
+        return;
+      }
+      const hitImage = findTopImageAtPoint(objectsRef.current, point);
+      if (hitImage) {
+        setSelectedObjectIds([hitImage.id]);
         dragSelectionRef.current = { lastPoint: point };
         setIsDraggingSelection(true);
         setIsDrawing(true);
