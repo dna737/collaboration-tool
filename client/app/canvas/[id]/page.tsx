@@ -41,11 +41,18 @@ export default function CanvasPage() {
 
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
       if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
         setActiveTool('select');
       } else if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault();
         setActiveTool('brush');
       } else if (e.key === 'e' || e.key === 'E') {
+        e.preventDefault();
         setActiveTool('eraser');
       }
     };

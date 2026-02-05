@@ -306,6 +306,35 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle object move preview (real-time streaming while dragging selection)
+  socket.on('object-move-preview', (data: { canvasId: string; objects: any[] }) => {
+    const { canvasId, objects } = data;
+
+    if (!canvasId || !Array.isArray(objects)) {
+      return; // Silently ignore invalid preview updates
+    }
+
+    socket.to(canvasId).emit('object-move-preview', {
+      canvasId,
+      nodeId: socket.id,
+      objects,
+      timestamp: Date.now(),
+    });
+  });
+
+  // Handle object move preview end (when user releases selection)
+  socket.on('object-move-preview-end', (data: { canvasId: string }) => {
+    const { canvasId } = data;
+
+    if (canvasId) {
+      socket.to(canvasId).emit('object-move-preview-end', {
+        canvasId,
+        nodeId: socket.id,
+        timestamp: Date.now(),
+      });
+    }
+  });
+
   // Handle eraser preview (real-time streaming of objects that will be erased)
   socket.on('eraser-preview', (data: { canvasId: string; strokeIds?: string[]; objectIds?: string[] }) => {
     const { canvasId } = data;

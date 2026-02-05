@@ -11,6 +11,8 @@ import {
   StrokeProgressMessage,
   InProgressStroke,
   EraserPreviewMessage,
+  ObjectMovePreviewMessage,
+  ObjectMovePreviewEndMessage,
   AssetUploadStartMessage,
   AssetUploadChunkMessage,
   AssetUploadCompleteMessage,
@@ -32,6 +34,8 @@ interface UseCollaborationProps {
   onCursorStop?: (nodeId: string) => void;
   onStrokeProgress?: (progressData: InProgressStroke) => void;
   onStrokeProgressEnd?: (nodeId: string, nodeIdStrokeId: string) => void;
+  onObjectMovePreview?: (nodeId: string, objects: CanvasObject[]) => void;
+  onObjectMovePreviewEnd?: (nodeId: string) => void;
   onEraserPreview?: (nodeId: string, objectIds: string[]) => void;
   onEraserPreviewEnd?: (nodeId: string) => void;
   onAssetAvailable?: (assetId: string) => void;
@@ -51,6 +55,8 @@ export function useCollaboration({
   onCursorStop,
   onStrokeProgress,
   onStrokeProgressEnd,
+  onObjectMovePreview,
+  onObjectMovePreviewEnd,
   onEraserPreview,
   onEraserPreviewEnd,
   onAssetAvailable,
@@ -65,6 +71,7 @@ export function useCollaboration({
   const lastCursorUpdateRef = useRef<number>(0); // For throttling cursor updates
   const lastStrokeProgressRef = useRef<number>(0); // For throttling stroke progress updates
   const lastEraserPreviewRef = useRef<number>(0); // For throttling eraser preview updates
+  const lastObjectMovePreviewRef = useRef<number>(0); // For throttling move preview updates
   
   // Store callbacks in refs to avoid reconnecting when they change
   const callbacksRef = useRef({
@@ -77,6 +84,8 @@ export function useCollaboration({
     onCursorStop,
     onStrokeProgress,
     onStrokeProgressEnd,
+    onObjectMovePreview,
+    onObjectMovePreviewEnd,
     onEraserPreview,
     onEraserPreviewEnd,
     onAssetAvailable,
@@ -96,13 +105,15 @@ export function useCollaboration({
       onCursorStop,
       onStrokeProgress,
       onStrokeProgressEnd,
+      onObjectMovePreview,
+      onObjectMovePreviewEnd,
       onEraserPreview,
       onEraserPreviewEnd,
       onAssetAvailable,
       onAssetChunk,
       onAssetComplete,
     };
-  }, [onObjectAdded, onObjectRemoved, onObjectUpdated, onCanvasCleared, onCanvasState, onCursorUpdate, onCursorStop, onStrokeProgress, onStrokeProgressEnd, onEraserPreview, onEraserPreviewEnd, onAssetAvailable, onAssetChunk, onAssetComplete]);
+  }, [onObjectAdded, onObjectRemoved, onObjectUpdated, onCanvasCleared, onCanvasState, onCursorUpdate, onCursorStop, onStrokeProgress, onStrokeProgressEnd, onObjectMovePreview, onObjectMovePreviewEnd, onEraserPreview, onEraserPreviewEnd, onAssetAvailable, onAssetChunk, onAssetComplete]);
 
   useEffect(() => {
     if (!canvasId) {
@@ -218,6 +229,20 @@ export function useCollaboration({
     socket.on('stroke-progress-end', (data: { nodeId: string; nodeIdStrokeId: string }) => {
       if (callbacksRef.current.onStrokeProgressEnd) {
         callbacksRef.current.onStrokeProgressEnd(data.nodeId, data.nodeIdStrokeId);
+      }
+    });
+
+    // Handle remote object move preview (real-time streaming while dragging)
+    socket.on('object-move-preview', (data: ObjectMovePreviewMessage) => {
+      if (data.canvasId === canvasId && data.nodeId && callbacksRef.current.onObjectMovePreview) {
+        callbacksRef.current.onObjectMovePreview(data.nodeId, data.objects);
+      }
+    });
+
+    // Handle remote object move preview end
+    socket.on('object-move-preview-end', (data: ObjectMovePreviewEndMessage) => {
+      if (data.canvasId === canvasId && data.nodeId && callbacksRef.current.onObjectMovePreviewEnd) {
+        callbacksRef.current.onObjectMovePreviewEnd(data.nodeId);
       }
     });
 
@@ -436,6 +461,34 @@ export function useCollaboration({
     [canvasId]
   );
 
+  // Send object move preview to server (throttled to ~50ms)
+  const sendObjectMovePreview = useCallback(
+    (objects: CanvasObject[]) => {
+      const now = Date.now();
+      if (now - lastObjectMovePreviewRef.current < 50) {
+        return;
+      }
+      lastObjectMovePreviewRef.current = now;
+
+      if (socketRef.current?.connected && canvasId) {
+        socketRef.current.emit('object-move-preview', {
+          canvasId,
+          objects,
+        } satisfies ObjectMovePreviewMessage);
+      }
+    },
+    [canvasId]
+  );
+
+  // Send object move preview end to server
+  const sendObjectMovePreviewEnd = useCallback(() => {
+    if (socketRef.current?.connected && canvasId) {
+      socketRef.current.emit('object-move-preview-end', {
+        canvasId,
+      } satisfies ObjectMovePreviewEndMessage);
+    }
+  }, [canvasId]);
+
   // Send eraser preview to server (throttled to ~50ms)
   const sendEraserPreview = useCallback(
     (objectIds: string[]) => {
@@ -477,6 +530,8 @@ export function useCollaboration({
     sendCursorStop,
     sendStrokeProgress,
     sendStrokeProgressEnd,
+    sendObjectMovePreview,
+    sendObjectMovePreviewEnd,
     sendEraserPreview,
     sendEraserPreviewEnd,
     sendAssetUploadStart,

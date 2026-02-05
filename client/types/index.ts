@@ -118,6 +118,19 @@ export interface EraserPreviewMessage {
   timestamp: number;
 }
 
+export interface ObjectMovePreviewMessage {
+  canvasId: string;
+  nodeId?: string;
+  objects: CanvasObject[];
+  timestamp?: number;
+}
+
+export interface ObjectMovePreviewEndMessage {
+  canvasId: string;
+  nodeId?: string;
+  timestamp?: number;
+}
+
 // Binary asset transfer (chunked)
 export interface AssetUploadStartMessage {
   canvasId: string;

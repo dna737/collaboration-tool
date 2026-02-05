@@ -92,12 +92,24 @@ export function renderAllObjects(
   height: number,
   objectsToErasePreview: Set<string> = new Set(),
   inProgressStrokes: Map<string, InProgressStroke> = new Map(),
-  imageCache: Map<string, CanvasImageSource> = new Map()
+  imageCache: Map<string, CanvasImageSource> = new Map(),
+  remoteMovePreviews: Map<string, CanvasObject[]> = new Map()
 ): void {
   clearCanvas(ctx, width, height);
 
+  const previewIds = new Set<string>();
+  if (remoteMovePreviews.size > 0) {
+    remoteMovePreviews.forEach((previewObjects) => {
+      previewObjects.forEach((obj) => previewIds.add(obj.id));
+    });
+  }
+
   // Render committed objects in order
   objects.forEach((obj) => {
+    if (previewIds.has(obj.id)) {
+      return;
+    }
+
     const opacity = objectsToErasePreview.has(obj.id) ? 0.5 : 1.0;
 
     if (obj.type === 'stroke') {
@@ -113,6 +125,22 @@ export function renderAllObjects(
   inProgressStrokes.forEach((inProgressStroke) => {
     drawInProgressStroke(ctx, inProgressStroke);
   });
+
+  // Render remote move previews (slightly transparent)
+  if (remoteMovePreviews.size > 0) {
+    const opacity = 0.85;
+    remoteMovePreviews.forEach((previewObjects) => {
+      previewObjects.forEach((obj) => {
+        if (obj.type === 'stroke') {
+          drawStroke(ctx, obj, opacity);
+          return;
+        }
+
+        const source = imageCache.get(obj.assetId);
+        drawImageObject(ctx, obj, source, opacity);
+      });
+    });
+  }
 }
 
 /**

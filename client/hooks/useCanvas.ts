@@ -130,6 +130,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const [inProgressStrokes, setInProgressStrokes] = useState<Map<string, InProgressStroke>>(new Map());
   const [objectsToErasePreview, setObjectsToErasePreview] = useState<Set<string>>(new Set());
   const [remoteEraserPreviews, setRemoteEraserPreviews] = useState<Map<string, Set<string>>>(new Map()); // nodeId -> objectIds
+  const [remoteMovePreviews, setRemoteMovePreviews] = useState<Map<string, CanvasObject[]>>(new Map());
   const objectsToEraseRef = useRef<string[]>([]); // Store IDs to erase for use in mouseUp
   const isUndoingRef = useRef(false); // Flag to prevent adding to history during undo
   const hasLoadedFromStorageRef = useRef(false); // Track if initial load from IndexedDB has happened
@@ -164,6 +165,8 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     sendCursorStop,
     sendStrokeProgress,
     sendStrokeProgressEnd,
+    sendObjectMovePreview,
+    sendObjectMovePreviewEnd,
     sendEraserPreview,
     sendEraserPreviewEnd,
     sendAssetUploadStart,
@@ -208,6 +211,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     onCanvasCleared: () => {
       setObjects([]);
       setImageCache(new Map());
+      setRemoteMovePreviews(new Map());
       // Fire and forget - errors are logged in the storage module
       storage.clearCanvas(canvasId);
     },
@@ -224,6 +228,20 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     },
     onStrokeProgressEnd: (nodeId: string, _nodeIdStrokeId: string) => {
       setInProgressStrokes((prev) => {
+        const newMap = new Map(prev);
+        newMap.delete(nodeId);
+        return newMap;
+      });
+    },
+    onObjectMovePreview: (nodeId: string, objects: CanvasObject[]) => {
+      setRemoteMovePreviews((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(nodeId, objects);
+        return newMap;
+      });
+    },
+    onObjectMovePreviewEnd: (nodeId: string) => {
+      setRemoteMovePreviews((prev) => {
         const newMap = new Map(prev);
         newMap.delete(nodeId);
         return newMap;
@@ -347,7 +365,16 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       objectIds.forEach((id) => combinedEraserPreview.add(id));
     });
 
-    renderAllObjects(ctx, objects, canvas.width, canvas.height, combinedEraserPreview, inProgressStrokes, imageCache);
+    renderAllObjects(
+      ctx,
+      objects,
+      canvas.width,
+      canvas.height,
+      combinedEraserPreview,
+      inProgressStrokes,
+      imageCache,
+      remoteMovePreviews
+    );
 
     if (selectedObjectIds.length > 0) {
       const selectedObjects = objects.filter((o) => selectedObjectIds.includes(o.id));
@@ -359,7 +386,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     if (selectionRect) {
       drawMarqueeRect(ctx, selectionRect.start, selectionRect.end);
     }
-  }, [objects, objectsToErasePreview, remoteEraserPreviews, inProgressStrokes, imageCache, selectedObjectIds, selectionRect]);
+  }, [objects, objectsToErasePreview, remoteEraserPreviews, inProgressStrokes, imageCache, remoteMovePreviews, selectedObjectIds, selectionRect]);
 
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -636,9 +663,9 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
           });
           objectsRef.current = next;
           setObjects(next);
-          next.forEach((o) => {
-            if (selectedSet.has(o.id)) maybeSendObjectUpdate(o);
-          });
+          const movedObjects = next.filter((o) => selectedSet.has(o.id));
+          sendObjectMovePreview(movedObjects);
+          sendCursorUpdate(point, true, 'select');
         }
         drag.lastPoint = point;
         return;
@@ -717,6 +744,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
         current.forEach((obj) => {
           if (selectedSet.has(obj.id)) maybeSendObjectUpdate(obj, true);
         });
+        sendObjectMovePreviewEnd();
         dragSelectionRef.current = null;
         setIsDraggingSelection(false);
         setIsDrawing(false);
