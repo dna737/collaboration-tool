@@ -148,8 +148,12 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
     };
   }, [activeTool, isDragging, trail.length]);
 
-  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isConnected || error) return;
+    e.preventDefault();
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
     handleMouseDown(e);
     if (activeTool === 'eraser') {
       setIsDragging(true);
@@ -158,7 +162,7 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
     }
   };
 
-  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isConnected || error) return;
     handleMouseMove(e);
     
@@ -184,19 +188,29 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
     }
   };
 
-  const handleCanvasMouseUp = () => {
+  const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     handleMouseUp();
     if (activeTool === 'eraser') {
       setIsDragging(false);
     }
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
   };
 
-  const handleCanvasMouseLeave = () => {
+  const handleCanvasPointerLeave = (e: React.PointerEvent<HTMLCanvasElement>) => {
     handleMouseLeave();
     setMousePosition(null);
     setIsDragging(false);
     setTrail([]);
     pendingTrailPoints.current = [];
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  };
+
+  const handleCanvasPointerCancel = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    handleCanvasPointerLeave(e);
   };
 
   const handleClearClick = () => {
@@ -293,15 +307,17 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
         ref={canvasRef}
         width={1200}
         height={800}
-        onMouseDown={handleCanvasMouseDown}
-        onMouseMove={handleCanvasMouseMove}
-        onMouseUp={handleCanvasMouseUp}
-        onMouseLeave={handleCanvasMouseLeave}
+        onPointerDown={handleCanvasPointerDown}
+        onPointerMove={handleCanvasPointerMove}
+        onPointerUp={handleCanvasPointerUp}
+        onPointerLeave={handleCanvasPointerLeave}
+        onPointerCancel={handleCanvasPointerCancel}
         style={{
           border: '2px solid #ddd',
           cursor: canvasCursor,
           backgroundColor: 'white',
           opacity: isDisabled ? 0.7 : 1,
+          touchAction: 'none',
         }}
       />
       {/* Disabled overlay */}

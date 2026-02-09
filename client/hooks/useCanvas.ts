@@ -615,6 +615,39 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     const handleKeyDown = (e: KeyboardEvent) => {
       // Disable undo if not connected or if there's an error
       if (!isConnected || error) return;
+
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        (e.target instanceof HTMLElement && e.target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (activeTool === 'select' && (e.key === 'Delete' || e.key === 'Backspace')) {
+        if (selectedObjectIds.length === 0) return;
+        e.preventDefault();
+
+        const selectedSet = new Set(selectedObjectIds);
+        const currentObjects = objectsRef.current;
+        const objectsToRemove = currentObjects.filter((obj) => selectedSet.has(obj.id));
+
+        if (objectsToRemove.length > 0) {
+          localActionHistoryRef.current.push({ type: 'remove', objects: objectsToRemove });
+          setObjects(currentObjects.filter((obj) => !selectedSet.has(obj.id)));
+          if (canvasId) {
+            sendObjectRemoved(selectedObjectIds);
+          }
+        }
+
+        setSelectedObjectIds([]);
+        setSelectionRect(null);
+        resizeSelectionRef.current = null;
+        dragSelectionRef.current = null;
+        setIsDraggingSelection(false);
+        setIsDrawing(false);
+        return;
+      }
       
       // Check for Ctrl+Z (or Cmd+Z on Mac)
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
@@ -652,9 +685,9 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isConnected, error, canvasId, sendObjectRemoved, sendObjectAdded]);
+  }, [activeTool, selectedObjectIds, isConnected, error, canvasId, sendObjectRemoved, sendObjectAdded]);
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     // Disable drawing if not connected or if there's an error
     if (!isConnected || error) return;
     
@@ -723,7 +756,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     }
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     // Disable drawing if not connected or if there's an error
     if (!isConnected || error) return;
 
