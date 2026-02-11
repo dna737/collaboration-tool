@@ -132,7 +132,7 @@ export default function Toolbar({
       )}
 
       <div style={{ marginLeft: 'auto', fontSize: '14px', color: activeTheme.textMuted }}>
-        <strong>Keyboard shortcuts:</strong> S/B/E | Shift+Alt+Delete | Ctrl+/ | Ctrl+Shift+Y | Ctrl+Shift+P | Hold Space to pan
+        Ctrl + / to view shortcuts
       </div>
     </div>
   );

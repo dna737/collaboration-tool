@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Canvas from '@/components/Canvas';
 import Toolbar from '@/components/Toolbar';
 import SessionFullDialog from '@/components/SessionFullDialog';
 import UsernameDialog from '@/components/UsernameDialog';
 import ShortcutsDialog from '@/components/ShortcutsDialog';
-import CommandPalette from '@/components/CommandPalette';
+import CommandPalette, { CommandPaletteCommand } from '@/components/CommandPalette';
 import { Tool } from '@/types';
 import { lightTheme, darkTheme } from '@/types/theme';
 
@@ -120,6 +120,42 @@ export default function CanvasPage() {
     window.location.reload();
   };
 
+  const commandPaletteCommands = useMemo<CommandPaletteCommand[]>(
+    () => [
+      {
+        id: 'tool-select',
+        label: 'Switch to Select tool',
+        keywords: ['tool', 'select', 'pointer'],
+        execute: () => setActiveTool('select'),
+      },
+      {
+        id: 'tool-brush',
+        label: 'Switch to Brush tool',
+        keywords: ['tool', 'brush', 'draw'],
+        execute: () => setActiveTool('brush'),
+      },
+      {
+        id: 'tool-eraser',
+        label: 'Switch to Eraser tool',
+        keywords: ['tool', 'eraser', 'erase'],
+        execute: () => setActiveTool('eraser'),
+      },
+      {
+        id: 'toggle-theme',
+        label: isDarkMode ? 'Switch to Light mode' : 'Switch to Dark mode',
+        keywords: ['theme', 'dark', 'light', 'mode'],
+        execute: () => setIsDarkMode((prev) => !prev),
+      },
+      {
+        id: 'toggle-shortcuts',
+        label: isShortcutsOpen ? 'Close Shortcuts dialog' : 'Open Shortcuts dialog',
+        keywords: ['shortcuts', 'hotkeys', 'help'],
+        execute: () => setIsShortcutsOpen((prev) => !prev),
+      },
+    ],
+    [isDarkMode, isShortcutsOpen]
+  );
+
   if (!canvasId) {
     return null;
   }
@@ -206,7 +242,12 @@ export default function CanvasPage() {
       {/* Show session full dialog */}
       {isSessionFull && <SessionFullDialog onRefresh={handleRefresh} theme={theme} />}
       <ShortcutsDialog open={isShortcutsOpen} onClose={() => setIsShortcutsOpen(false)} theme={theme} />
-      <CommandPalette open={isCommandPaletteOpen} onClose={() => setIsCommandPaletteOpen(false)} theme={theme} />
+      <CommandPalette
+        open={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        theme={theme}
+        commands={commandPaletteCommands}
+      />
     </main>
   );
 }
