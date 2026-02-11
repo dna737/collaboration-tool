@@ -55,6 +55,10 @@ npm run server
 
 The app will automatically create a new canvas with a unique ID. Share the URL to collaborate with others in real-time!
 
+## AI Assistant Context
+
+This repository includes a root-level `GEMINI.md` file with project-specific guidance for Gemini CLI workflows (reviews, issue triage, and coding assistance). Keep it updated when architecture, commands, or platform scope changes.
+
 ## Project Structure
 
 ```
