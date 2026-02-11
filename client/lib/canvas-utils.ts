@@ -97,9 +97,12 @@ export function renderAllObjects(
   objectsToErasePreview: Set<string> = new Set(),
   inProgressStrokes: Map<string, InProgressStroke> = new Map(),
   imageCache: Map<string, CanvasImageSource> = new Map(),
-  remoteMovePreviews: Map<string, CanvasObject[]> = new Map()
+  remoteMovePreviews: Map<string, CanvasObject[]> = new Map(),
+  viewOffset: Point = { x: 0, y: 0 }
 ): void {
   clearCanvas(ctx, width, height);
+  ctx.save();
+  ctx.translate(viewOffset.x, viewOffset.y);
 
   const previewIds = new Set<string>();
   if (remoteMovePreviews.size > 0) {
@@ -145,6 +148,7 @@ export function renderAllObjects(
       });
     });
   }
+  ctx.restore();
 }
 
 /**
@@ -193,12 +197,13 @@ export function drawInProgressStroke(
 export function getCanvasPoint(
   canvas: HTMLCanvasElement,
   clientX: number,
-  clientY: number
+  clientY: number,
+  viewOffset: Point = { x: 0, y: 0 }
 ): Point {
   const rect = canvas.getBoundingClientRect();
   return {
-    x: clientX - rect.left,
-    y: clientY - rect.top,
+    x: clientX - rect.left - viewOffset.x,
+    y: clientY - rect.top - viewOffset.y,
   };
 }
 

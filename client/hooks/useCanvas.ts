@@ -151,7 +151,11 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [selectionRect, setSelectionRect] = useState<{ start: Point; end: Point } | null>(null);
   const [isDraggingSelection, setIsDraggingSelection] = useState(false);
+  const [viewOffset, setViewOffset] = useState<Point>({ x: 0, y: 0 });
+  const [isSpacePressed, setIsSpacePressed] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
   const dragSelectionRef = useRef<{ lastPoint: Point } | null>(null);
+  const panStartRef = useRef<{ pointer: { x: number; y: number }; offset: Point } | null>(null);
   const resizeSelectionRef = useRef<{
     imageId: string;
     handle: ResizeHandle;
@@ -424,9 +428,12 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
       combinedEraserPreview,
       inProgressStrokes,
       imageCache,
-      remoteMovePreviews
+      remoteMovePreviews,
+      viewOffset
     );
 
+    ctx.save();
+    ctx.translate(viewOffset.x, viewOffset.y);
     if (selectedObjectIds.length > 0) {
       const selectedObjects = objects.filter((o) => selectedObjectIds.includes(o.id));
       const box = getSelectionBoundingBox(selectedObjects);
@@ -444,7 +451,8 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     if (selectionRect) {
       drawMarqueeRect(ctx, selectionRect.start, selectionRect.end);
     }
-  }, [objects, objectsToErasePreview, remoteEraserPreviews, inProgressStrokes, imageCache, remoteMovePreviews, selectedObjectIds, selectionRect]);
+    ctx.restore();
+  }, [objects, objectsToErasePreview, remoteEraserPreviews, inProgressStrokes, imageCache, remoteMovePreviews, selectedObjectIds, selectionRect, viewOffset]);
 
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -615,6 +623,7 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     const handleKeyDown = (e: KeyboardEvent) => {
       // Disable undo if not connected or if there's an error
       if (!isConnected || error) return;
+      if (isSpacePressed) return;
 
       if (
         e.target instanceof HTMLInputElement ||
@@ -685,16 +694,66 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTool, selectedObjectIds, isConnected, error, canvasId, sendObjectRemoved, sendObjectAdded]);
+  }, [activeTool, selectedObjectIds, isConnected, error, canvasId, sendObjectRemoved, sendObjectAdded, isSpacePressed]);
+
+  // Spacebar hold to temporarily pan (hand tool behavior)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (!isSpacePressed) {
+          setIsSpacePressed(true);
+        }
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        setIsSpacePressed(false);
+        setIsPanning(false);
+        panStartRef.current = null;
+      }
+    };
+
+    const handleBlur = () => {
+      setIsSpacePressed(false);
+      setIsPanning(false);
+      panStartRef.current = null;
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [isSpacePressed]);
 
   const handleMouseDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     // Disable drawing if not connected or if there's an error
     if (!isConnected || error) return;
+
+    if (isSpacePressed) {
+      setIsPanning(true);
+      panStartRef.current = {
+        pointer: { x: e.clientX, y: e.clientY },
+        offset: viewOffset,
+      };
+      return;
+    }
     
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const point = getCanvasPoint(canvas, e.clientX, e.clientY);
+    const point = getCanvasPoint(canvas, e.clientX, e.clientY, viewOffset);
     lastPointerPositionRef.current = point;
 
     if (activeTool === 'select') {
@@ -760,10 +819,20 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     // Disable drawing if not connected or if there's an error
     if (!isConnected || error) return;
 
+    if (isPanning && panStartRef.current) {
+      const dx = e.clientX - panStartRef.current.pointer.x;
+      const dy = e.clientY - panStartRef.current.pointer.y;
+      setViewOffset({
+        x: panStartRef.current.offset.x + dx,
+        y: panStartRef.current.offset.y + dy,
+      });
+      return;
+    }
+
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const point = getCanvasPoint(canvas, e.clientX, e.clientY);
+    const point = getCanvasPoint(canvas, e.clientX, e.clientY, viewOffset);
     lastPointerPositionRef.current = point;
 
     if (activeTool === 'select') {
@@ -896,8 +965,8 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
 
       if (latestPoints.length > 0) {
         ctx.beginPath();
-        ctx.moveTo(latestPoints[latestPoints.length - 1].x, latestPoints[latestPoints.length - 1].y);
-        ctx.lineTo(point.x, point.y);
+        ctx.moveTo(latestPoints[latestPoints.length - 1].x + viewOffset.x, latestPoints[latestPoints.length - 1].y + viewOffset.y);
+        ctx.lineTo(point.x + viewOffset.x, point.y + viewOffset.y);
         ctx.stroke();
       }
       
@@ -926,6 +995,12 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   };
 
   const handleMouseUp = () => {
+    if (isPanning) {
+      setIsPanning(false);
+      panStartRef.current = null;
+      return;
+    }
+
     // Disable drawing if not connected or if there's an error
     if (!isConnected || error) {
       setIsDrawing(false);
@@ -1050,6 +1125,12 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
   };
 
   const handleMouseLeave = () => {
+    if (isPanning) {
+      setIsPanning(false);
+      panStartRef.current = null;
+      return;
+    }
+
     if (isDrawing) {
       handleMouseUp();
     } else {
@@ -1095,6 +1176,9 @@ export function useCanvas({ canvasId, userName, activeTool, brushSize, brushColo
     error,
     isInitializing,
     isDraggingSelection,
+    viewOffset,
+    isSpacePressed,
+    isPanning,
     selectCursor,
     handleMouseDown,
     handleMouseMove,

@@ -6,7 +6,12 @@ import Canvas from '@/components/Canvas';
 import Toolbar from '@/components/Toolbar';
 import SessionFullDialog from '@/components/SessionFullDialog';
 import UsernameDialog from '@/components/UsernameDialog';
+import ShortcutsDialog from '@/components/ShortcutsDialog';
+import CommandPalette from '@/components/CommandPalette';
 import { Tool } from '@/types';
+import { lightTheme, darkTheme } from '@/types/theme';
+
+const THEME_STORAGE_KEY = 'canvas-ui-theme';
 
 export default function CanvasPage() {
   const params = useParams();
@@ -22,6 +27,10 @@ export default function CanvasPage() {
   // Track error and initialization state from Canvas component
   const [error, setError] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const theme = isDarkMode ? darkTheme : lightTheme;
 
   // Handle user joining with their name
   const handleJoin = (name: string) => {
@@ -40,18 +49,54 @@ export default function CanvasPage() {
   }, [canvasId, router]);
 
   useEffect(() => {
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    setIsDarkMode(savedTheme === 'dark');
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(THEME_STORAGE_KEY, isDarkMode ? 'dark' : 'light');
+  }, [isDarkMode]);
+
+  useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
 
-      if (e.key === 's' || e.key === 'S') {
+      const key = e.key.toLowerCase();
+      const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+
+      if (isCtrlOrMeta && (e.key === '/' || e.key === '?')) {
+        e.preventDefault();
+        setIsShortcutsOpen((prev) => !prev);
+        return;
+      }
+
+      if (isCtrlOrMeta && e.shiftKey && key === 'y') {
+        e.preventDefault();
+        setIsDarkMode((prev) => !prev);
+        return;
+      }
+
+      if (isCtrlOrMeta && e.shiftKey && key === 'p') {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+        return;
+      }
+
+      if (key === 'escape') {
+        setIsShortcutsOpen(false);
+        setIsCommandPaletteOpen(false);
+        return;
+      }
+
+      if (key === 's') {
         e.preventDefault();
         setActiveTool('select');
-      } else if (e.key === 'b' || e.key === 'B') {
+      } else if (key === 'b') {
         e.preventDefault();
         setActiveTool('brush');
-      } else if (e.key === 'e' || e.key === 'E') {
+      } else if (key === 'e') {
         e.preventDefault();
         setActiveTool('eraser');
       }
@@ -81,7 +126,7 @@ export default function CanvasPage() {
 
   // Show username dialog before joining
   if (!hasJoined) {
-    return <UsernameDialog onJoin={handleJoin} />;
+    return <UsernameDialog onJoin={handleJoin} theme={theme} />;
   }
 
   return (
@@ -89,22 +134,32 @@ export default function CanvasPage() {
       style={{
         minHeight: '100vh',
         padding: '20px',
-        backgroundColor: '#fafafa',
+        backgroundColor: theme.pageBackground,
       }}
     >
       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
         <header style={{ marginBottom: '20px' }}>
-          <h1 style={{ fontSize: '32px', fontWeight: 'bold', margin: '0 0 10px 0' }}>
+          <h1 style={{ fontSize: '32px', fontWeight: 'bold', margin: '0 0 10px 0', color: theme.textPrimary }}>
             Canvas Drawing App
           </h1>
-          <p style={{ color: '#6b7280', margin: 0 }}>
+          <p style={{ color: theme.textMuted, margin: 0 }}>
             Draw, erase, and create. Your work is automatically saved.
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '5px' }}>
-            <p style={{ color: '#9ca3af', margin: 0, fontSize: '14px' }}>
-              Canvas ID: <code style={{ backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px' }}>{canvasId}</code>
+            <p style={{ color: theme.textMuted, margin: 0, fontSize: '14px' }}>
+              Canvas ID:{' '}
+              <code
+                style={{
+                  backgroundColor: theme.isDark ? '#1f2937' : '#e5e7eb',
+                  color: theme.textPrimary,
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                }}
+              >
+                {canvasId}
+              </code>
             </p>
-            <p style={{ color: '#3b82f6', margin: 0, fontSize: '14px', fontWeight: '500' }}>
+            <p style={{ color: theme.accent, margin: 0, fontSize: '14px', fontWeight: '500' }}>
               👤 {userName}
             </p>
           </div>
@@ -120,6 +175,7 @@ export default function CanvasPage() {
             onToolChange={setActiveTool}
             onBrushSizeChange={setBrushSize}
             onBrushColorChange={setBrushColor}
+            theme={theme}
           />
         )}
 
@@ -141,14 +197,16 @@ export default function CanvasPage() {
         </div>
 
         {!isInitializing && !isSessionFull && (
-          <footer style={{ marginTop: '40px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
+          <footer style={{ marginTop: '40px', textAlign: 'center', color: theme.textMuted, fontSize: '14px' }}>
             <p>All drawings are saved automatically. Share this URL to collaborate in real-time.</p>
           </footer>
         )}
       </div>
 
       {/* Show session full dialog */}
-      {isSessionFull && <SessionFullDialog onRefresh={handleRefresh} />}
+      {isSessionFull && <SessionFullDialog onRefresh={handleRefresh} theme={theme} />}
+      <ShortcutsDialog open={isShortcutsOpen} onClose={() => setIsShortcutsOpen(false)} theme={theme} />
+      <CommandPalette open={isCommandPaletteOpen} onClose={() => setIsCommandPaletteOpen(false)} theme={theme} />
     </main>
   );
 }

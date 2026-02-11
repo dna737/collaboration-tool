@@ -1,13 +1,25 @@
 'use client';
 
 import { useState, FormEvent } from 'react';
+import { CanvasTheme } from '@/types/theme';
 
 interface UsernameDialogProps {
   onJoin: (username: string) => void;
+  theme?: CanvasTheme;
 }
 
-export default function UsernameDialog({ onJoin }: UsernameDialogProps) {
+export default function UsernameDialog({ onJoin, theme }: UsernameDialogProps) {
   const [name, setName] = useState('');
+  const activeTheme = theme ?? {
+    isDark: false,
+    pageBackground: '#fafafa',
+    panelBackground: '#ffffff',
+    panelBorder: '#e5e7eb',
+    textPrimary: '#111827',
+    textMuted: '#6b7280',
+    accent: '#3b82f6',
+    overlayBackdrop: 'rgba(0, 0, 0, 0.45)',
+  };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -25,7 +37,7 @@ export default function UsernameDialog({ onJoin }: UsernameDialogProps) {
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        backgroundColor: activeTheme.overlayBackdrop,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -34,7 +46,8 @@ export default function UsernameDialog({ onJoin }: UsernameDialogProps) {
     >
       <div
         style={{
-          backgroundColor: 'white',
+          backgroundColor: activeTheme.panelBackground,
+          border: `1px solid ${activeTheme.panelBorder}`,
           borderRadius: '12px',
           padding: '32px',
           maxWidth: '400px',
@@ -55,7 +68,7 @@ export default function UsernameDialog({ onJoin }: UsernameDialogProps) {
               width: '64px',
               height: '64px',
               borderRadius: '50%',
-              backgroundColor: '#dbeafe',
+              backgroundColor: activeTheme.isDark ? '#1e3a8a' : '#dbeafe',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -73,7 +86,7 @@ export default function UsernameDialog({ onJoin }: UsernameDialogProps) {
             fontWeight: 'bold',
             textAlign: 'center',
             margin: '0 0 8px 0',
-            color: '#1f2937',
+            color: activeTheme.textPrimary,
           }}
         >
           Join Canvas
@@ -83,7 +96,7 @@ export default function UsernameDialog({ onJoin }: UsernameDialogProps) {
         <p
           style={{
             fontSize: '14px',
-            color: '#6b7280',
+            color: activeTheme.textMuted,
             textAlign: 'center',
             margin: '0 0 24px 0',
           }}
@@ -104,7 +117,9 @@ export default function UsernameDialog({ onJoin }: UsernameDialogProps) {
               width: '100%',
               padding: '12px 16px',
               fontSize: '16px',
-              border: '2px solid #e5e7eb',
+              border: `2px solid ${activeTheme.panelBorder}`,
+              backgroundColor: activeTheme.isDark ? '#0b1220' : '#ffffff',
+              color: activeTheme.textPrimary,
               borderRadius: '8px',
               outline: 'none',
               marginBottom: '16px',
@@ -112,10 +127,10 @@ export default function UsernameDialog({ onJoin }: UsernameDialogProps) {
               transition: 'border-color 0.2s',
             }}
             onFocus={(e) => {
-              e.currentTarget.style.borderColor = '#3b82f6';
+              e.currentTarget.style.borderColor = activeTheme.accent;
             }}
             onBlur={(e) => {
-              e.currentTarget.style.borderColor = '#e5e7eb';
+              e.currentTarget.style.borderColor = activeTheme.panelBorder;
             }}
           />
 
@@ -125,7 +140,7 @@ export default function UsernameDialog({ onJoin }: UsernameDialogProps) {
             style={{
               width: '100%',
               padding: '12px 24px',
-              backgroundColor: name.trim() ? '#3b82f6' : '#9ca3af',
+              backgroundColor: name.trim() ? activeTheme.accent : '#9ca3af',
               color: 'white',
               border: 'none',
               borderRadius: '8px',
@@ -136,12 +151,12 @@ export default function UsernameDialog({ onJoin }: UsernameDialogProps) {
             }}
             onMouseOver={(e) => {
               if (name.trim()) {
-                e.currentTarget.style.backgroundColor = '#2563eb';
+                e.currentTarget.style.backgroundColor = activeTheme.isDark ? '#3b82f6' : '#2563eb';
               }
             }}
             onMouseOut={(e) => {
               if (name.trim()) {
-                e.currentTarget.style.backgroundColor = '#3b82f6';
+                e.currentTarget.style.backgroundColor = activeTheme.accent;
               }
             }}
           >

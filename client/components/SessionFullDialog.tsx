@@ -1,10 +1,24 @@
 'use client';
 
+import { CanvasTheme } from '@/types/theme';
+
 interface SessionFullDialogProps {
   onRefresh: () => void;
+  theme?: CanvasTheme;
 }
 
-export default function SessionFullDialog({ onRefresh }: SessionFullDialogProps) {
+export default function SessionFullDialog({ onRefresh, theme }: SessionFullDialogProps) {
+  const activeTheme = theme ?? {
+    isDark: false,
+    pageBackground: '#fafafa',
+    panelBackground: '#ffffff',
+    panelBorder: '#e5e7eb',
+    textPrimary: '#111827',
+    textMuted: '#6b7280',
+    accent: '#3b82f6',
+    overlayBackdrop: 'rgba(0, 0, 0, 0.45)',
+  };
+
   return (
     <div
       style={{
@@ -13,7 +27,7 @@ export default function SessionFullDialog({ onRefresh }: SessionFullDialogProps)
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        backgroundColor: activeTheme.overlayBackdrop,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -22,7 +36,8 @@ export default function SessionFullDialog({ onRefresh }: SessionFullDialogProps)
     >
       <div
         style={{
-          backgroundColor: 'white',
+          backgroundColor: activeTheme.panelBackground,
+          border: `1px solid ${activeTheme.panelBorder}`,
           borderRadius: '12px',
           padding: '32px',
           maxWidth: '480px',
@@ -43,7 +58,7 @@ export default function SessionFullDialog({ onRefresh }: SessionFullDialogProps)
               width: '64px',
               height: '64px',
               borderRadius: '50%',
-              backgroundColor: '#fef3c7',
+              backgroundColor: activeTheme.isDark ? '#78350f' : '#fef3c7',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -61,7 +76,7 @@ export default function SessionFullDialog({ onRefresh }: SessionFullDialogProps)
             fontWeight: 'bold',
             textAlign: 'center',
             margin: '0 0 12px 0',
-            color: '#1f2937',
+            color: activeTheme.textPrimary,
           }}
         >
           Session Full
@@ -71,7 +86,7 @@ export default function SessionFullDialog({ onRefresh }: SessionFullDialogProps)
         <p
           style={{
             fontSize: '16px',
-            color: '#6b7280',
+            color: activeTheme.textMuted,
             textAlign: 'center',
             margin: '0 0 24px 0',
             lineHeight: '1.5',
@@ -92,7 +107,7 @@ export default function SessionFullDialog({ onRefresh }: SessionFullDialogProps)
             onClick={onRefresh}
             style={{
               padding: '12px 24px',
-              backgroundColor: '#3b82f6',
+              backgroundColor: activeTheme.accent,
               color: 'white',
               border: 'none',
               borderRadius: '8px',
@@ -102,10 +117,10 @@ export default function SessionFullDialog({ onRefresh }: SessionFullDialogProps)
               transition: 'background-color 0.2s',
             }}
             onMouseOver={(e) => {
-              e.currentTarget.style.backgroundColor = '#2563eb';
+              e.currentTarget.style.backgroundColor = activeTheme.isDark ? '#3b82f6' : '#2563eb';
             }}
             onMouseOut={(e) => {
-              e.currentTarget.style.backgroundColor = '#3b82f6';
+              e.currentTarget.style.backgroundColor = activeTheme.accent;
             }}
           >
             Refresh Page
@@ -113,7 +128,7 @@ export default function SessionFullDialog({ onRefresh }: SessionFullDialogProps)
           <p
             style={{
               fontSize: '14px',
-              color: '#9ca3af',
+              color: activeTheme.textMuted,
               textAlign: 'center',
               margin: 0,
             }}

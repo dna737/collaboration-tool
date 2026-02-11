@@ -46,6 +46,9 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
     error,
     isInitializing,
     isDraggingSelection,
+    viewOffset,
+    isSpacePressed,
+    isPanning,
     selectCursor,
     handleMouseDown,
     handleMouseMove,
@@ -221,6 +224,23 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
     }
   };
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      if (e.shiftKey && e.altKey && e.key === 'Delete') {
+        e.preventDefault();
+        handleClearClick();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleClearClick]);
+
   const getOpacity = (timestamp: number, index: number, total: number) => {
     const age = Date.now() - timestamp;
     // Base opacity fades from 0.5 to 0 over 800ms
@@ -238,6 +258,8 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
   let canvasCursor: string = 'grab';
   if (isDisabled) {
     canvasCursor = 'not-allowed';
+  } else if (isSpacePressed) {
+    canvasCursor = isPanning ? 'grabbing' : 'grab';
   } else if (activeTool === 'brush') {
     canvasCursor = 'crosshair';
   } else if (activeTool === 'eraser') {
@@ -391,8 +413,8 @@ export default function Canvas({ canvasId, userName, activeTool, brushSize, brus
             key={cursor.nodeId}
             style={{
               position: 'absolute',
-              left: cursor.position.x,
-              top: cursor.position.y,
+              left: cursor.position.x + viewOffset.x,
+              top: cursor.position.y + viewOffset.y,
               transform: 'translate(-50%, -100%)',
               pointerEvents: 'none',
               zIndex: 50,
